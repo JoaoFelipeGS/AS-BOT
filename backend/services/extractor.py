@@ -94,7 +94,23 @@ def _as_number(value):
     match = re.search(r"\d+(?:[.,]\d+)?", str(value))
     if not match:
         return 0
-    return float(match.group(0).replace(".", "").replace(",", "."))
+    raw = match.group(0)
+    if "," in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif raw.count(".") > 1:
+        raw = raw.replace(".", "")
+    return float(raw)
+
+
+def _property_values(entity):
+    values = {}
+    properties = entity.get("additionalProperty") or entity.get("additionalProperties") or []
+    if isinstance(properties, dict):
+        properties = [properties]
+    for prop in properties:
+        if isinstance(prop, dict) and prop.get("name"):
+            values[str(prop["name"]).lower()] = prop.get("value")
+    return values
 
 
 def _extrair_dados_estruturados(soup, url):
@@ -146,6 +162,7 @@ def _extrair_dados_estruturados(soup, url):
     offers = entity.get("offers") or {}
     if isinstance(offers, list):
         offers = offers[0] if offers else {}
+    properties = _property_values(entity)
     address = entity.get("address") or {}
     if isinstance(address, str):
         address_text = address
@@ -157,16 +174,19 @@ def _extrair_dados_estruturados(soup, url):
         images = [images]
     images = [urljoin(url, image) for image in images if isinstance(image, str)]
     entity_text = html_lib.unescape(" ".join(str(value) for value in (entity.get("name"), entity.get("description")) if value))
-    bedrooms = int(_as_number(entity.get("numberOfBedrooms"))) or _extrair_comodos(entity_text)[0]
-    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms"))) or _extrair_comodos(entity_text)[1]
+    bedrooms = int(_as_number(entity.get("numberOfBedrooms") or properties.get("quartos") or properties.get("dormitórios"))) or _extrair_comodos(entity_text)[0]
+    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms") or properties.get("banheiros"))) or _extrair_comodos(entity_text)[1]
     parking = 0
-    for feature in entity.get("amenityFeature") or []:
+    features = entity.get("amenityFeature") or []
+    if isinstance(features, dict):
+        features = [features]
+    for feature in features:
         if isinstance(feature, dict) and any(word in str(feature.get("name", "")).lower() for word in ("garagem", "vaga", "parking")):
             parking = int(_as_number(feature.get("value")))
     if not parking:
-        parking = _extrair_comodos(entity_text)[2]
+        parking = int(_as_number(properties.get("garagem") or properties.get("vagas"))) or _extrair_comodos(entity_text)[2]
 
-    area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea")
+    area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea") or properties.get("área total") or properties.get("área útil") or properties.get("area") or _extrair_area(entity_text)
     if isinstance(area, dict):
         area = area.get("value")
 
@@ -251,9 +271,9 @@ def _extrair_comodos(text: str) -> Tuple[int, int, int]:
 
 
 def _extrair_area(text: str) -> int:
-    match = re.search(r"(\d{2,})\s*(?:m²|m2|metros quadrados|m\s*quadrados|área)", text, re.I)
+    match = re.search(r"(\d{2,}(?:[.,]\d+)?)\s*(?:m²|m2|metros quadrados|m\s*quadrados|área)", text, re.I)
     if match:
-        return int(match.group(1))
+        return int(_as_number(match.group(1)))
     return 0
 
 
@@ -280,6 +300,14 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
     try:
         if preferred_urls:
             imagens.extend(preferred_urls)
+            for tag in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
+                image_url = tag.get("content")
+                if image_url:
+                    imagens.append(urljoin(url_imovel, image_url))
+            for script in soup.find_all("script"):
+                for image_url in re.findall(r"https?://[^\"'\\s]+?\.(?:jpe?g|png|webp)(?:\?[^\"'\\s]+)?", script.get_text(), re.I):
+                    if image_url not in imagens:
+                        imagens.append(image_url)
         else:
             for tag in soup.find_all(["img", "source"]):
                 for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
@@ -308,7 +336,7 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
                 except Exception:
                     break
 
-        imagens = [img.split("?")[0] for img in imagens if img]
+        imagens = [img.split("?")[0] for img in imagens if img and not any(k in img.lower() for k in ("logo", "avatar", "icon", "badge"))]
         imagens = list(dict.fromkeys(imagens))
 
         referencia = url_imovel.split("/")[-1].split("?")[0]

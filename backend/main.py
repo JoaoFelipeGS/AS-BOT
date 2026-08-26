@@ -20,9 +20,18 @@ except ImportError:
 # =========================================================
 # 2. FIXES PARA WINDOWS E PLAYWRIGHT
 # =========================================================
-# Forçamos o Playwright a buscar os navegadores na pasta do usuário
-playwright_path = os.path.expanduser("~") + "\\AppData\\Local\\ms-playwright"
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = playwright_path
+# Define a pasta correta do Playwright para cada sistema operacional.
+# No Render/Linux, isso deve apontar para ~/.cache/ms-playwright e não para AppData\Local.
+def get_playwright_browsers_path() -> str:
+    home = Path.home()
+    if sys.platform.startswith("win"):
+        return str(home / "AppData" / "Local" / "ms-playwright")
+    if sys.platform == "darwin":
+        return str(home / "Library" / "Caches" / "ms-playwright")
+    return str(home / ".cache" / "ms-playwright")
+
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = get_playwright_browsers_path()
+logger.info(f"PLAYWRIGHT_BROWSERS_PATH={os.environ['PLAYWRIGHT_BROWSERS_PATH']}")
 
 # Windows Async Loop Fix
 if sys.platform.startswith("win"):
@@ -132,6 +141,21 @@ if BUILD_DIR.exists() and any(BUILD_DIR.iterdir()):
     logger.info(f"🌐 Frontend carregado com sucesso de: {BUILD_DIR}")
 else:
     logger.warning(f"⚠️ Pasta 'dist' não encontrada em {BUILD_DIR}. O site não será servido.")
+
+@app.get("/")
+async def root_info():
+    if BUILD_DIR.exists():
+        index_file = BUILD_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+
+    return {
+        "status": "ok",
+        "service": "AS Marketplace Bot",
+        "message": "Backend running. Frontend is served by Vercel in production.",
+        "health": "/health",
+        "docs": "/docs"
+    }
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):

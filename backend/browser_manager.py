@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from typing import Dict
 from pathlib import Path
@@ -7,6 +8,15 @@ from .config import settings
 import logging
 
 logger = logging.getLogger("bot")
+
+
+def get_playwright_browsers_path() -> str:
+    home = Path.home()
+    if sys.platform.startswith("win"):
+        return str(home / "AppData" / "Local" / "ms-playwright")
+    if sys.platform == "darwin":
+        return str(home / "Library" / "Caches" / "ms-playwright")
+    return str(home / ".cache" / "ms-playwright")
 
 class BrowserSession:
     def __init__(self, context: BrowserContext):
@@ -30,6 +40,8 @@ class BrowserManager:
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
             except Exception:
                 pass
+
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = get_playwright_browsers_path()
 
         if self._playwright is None:
             self._playwright = await async_playwright().start()

@@ -2,6 +2,7 @@
 import re
 import asyncio
 import json
+import html as html_lib
 from urllib.parse import urljoin, urlparse
 from typing import Tuple
 
@@ -37,6 +38,9 @@ async def extrair_dados(page, url):
     structured = _extrair_dados_estruturados(soup, url)
     listing_text = structured.get("text") or text
 
+    if not structured and not _pagina_tem_dados_de_imovel(soup, text):
+        raise ValueError("A página não contém dados de imóvel extraíveis")
+
     titulo = structured.get("titulo") or _extrair_titulo(soup, listing_text)
     descricao = structured.get("descricao") or _extrair_descricao(soup, listing_text)
     preco = structured.get("preco") or _extrair_preco(listing_text)
@@ -67,6 +71,18 @@ async def extrair_dados(page, url):
     }
     logger.info(f"EXTRAÇÃO FINALIZADA: Preço {preco}, Quartos {quartos}, Fotos {len(fotos)}")
     return dados
+
+
+def _pagina_tem_dados_de_imovel(soup, text: str) -> bool:
+    """Reject challenge/error pages instead of persisting them as empty listings."""
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("403 forbidden", "vercel security checkpoint", "enable javascript to continue")):
+        return False
+    return bool(
+        soup.select_one("meta[property='og:title']")
+        or re.search(r"r\$\s*[\d.]+(?:,\d{2})?", text, re.I)
+        or re.search(r"\d+\s*(?:quartos?|dormit[óo]rios?)", text, re.I)
+    )
 
 
 def _flatten_json(value):
@@ -119,10 +135,29 @@ def _extrair_dados_estruturados(soup, url):
         if entity_url and _clean_url(str(entity_url)) == requested:
             candidates.append(entity)
 
+    candidates = [
+        entity for entity in candidates
+        if entity.get("name") or entity.get("description") or entity.get("image")
+    ]
+
+    # Some portals publish one complete Product entity without a URL and a
+    # second partial node with the page URL. Rank both and keep the richest.
+    products = []
+    for entity in entities:
+        offers = entity.get("offers") or {}
+        has_price = bool(entity.get("price")) or (
+            isinstance(offers, dict) and bool(offers.get("price"))
+        )
+        if entity.get("name") and has_price and entity.get("image"):
+            products.append(entity)
+    candidates.extend(products)
     if not candidates:
         return {}
 
-    entity = max(candidates, key=lambda item: len(item.get("image", [])) if isinstance(item.get("image"), list) else 0)
+    entity = max(
+        candidates,
+        key=lambda item: sum(bool(item.get(key)) for key in ("name", "description", "image", "offers", "price")),
+    )
     offers = entity.get("offers") or {}
     if isinstance(offers, list):
         offers = offers[0] if offers else {}
@@ -136,19 +171,22 @@ def _extrair_dados_estruturados(soup, url):
     if isinstance(images, str):
         images = [images]
     images = [urljoin(url, image) for image in images if isinstance(image, str)]
-    bedrooms = int(_as_number(entity.get("numberOfBedrooms")))
-    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms")))
+    entity_text = html_lib.unescape(" ".join(str(value) for value in (entity.get("name"), entity.get("description")) if value))
+    bedrooms = int(_as_number(entity.get("numberOfBedrooms"))) or _extrair_comodos(entity_text)[0]
+    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms"))) or _extrair_comodos(entity_text)[1]
     parking = 0
     for feature in entity.get("amenityFeature") or []:
         if isinstance(feature, dict) and any(word in str(feature.get("name", "")).lower() for word in ("garagem", "vaga", "parking")):
             parking = int(_as_number(feature.get("value")))
+    if not parking:
+        parking = _extrair_comodos(entity_text)[2]
 
     area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea")
     if isinstance(area, dict):
         area = area.get("value")
 
     return {
-        "titulo": entity.get("name") or "",
+        "titulo": entity.get("name") or entity.get("description") or "",
         "descricao": entity.get("description") or "",
         "preco": _as_number(offers.get("price") or entity.get("price")),
         "quartos": bedrooms,
@@ -157,7 +195,7 @@ def _extrair_dados_estruturados(soup, url):
         "area": int(_as_number(area)),
         "endereco": address_text,
         "fotos": list(dict.fromkeys(images)),
-        "text": " ".join(str(value) for value in (entity.get("name"), entity.get("description"), address_text)),
+        "text": html_lib.unescape(" ".join(str(value) for value in (entity.get("name"), entity.get("description"), address_text))),
     }
 
 

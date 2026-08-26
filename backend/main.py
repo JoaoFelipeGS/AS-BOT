@@ -31,7 +31,7 @@ if sys.platform.startswith("win"):
     except Exception:
         pass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -135,10 +135,15 @@ else:
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):
-    if not full_path.startswith("api") and not full_path.startswith("static"):
-        if BUILD_DIR.exists():
-            return FileResponse(BUILD_DIR / "index.html")
-    return await app.handle_exception(Exception("Not Found"))
+    if full_path.startswith("api") or full_path.startswith("static"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    if BUILD_DIR.exists():
+        index_file = BUILD_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+
+    raise HTTPException(status_code=404, detail="Frontend not available")
 
 @app.get("/health")
 async def health_check():

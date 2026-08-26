@@ -38,9 +38,6 @@ async def extrair_dados(page, url):
     structured = _extrair_dados_estruturados(soup, url)
     listing_text = structured.get("text") or text
 
-    if not structured and not _pagina_tem_dados_de_imovel(soup, text):
-        raise ValueError("A página não contém dados de imóvel extraíveis")
-
     titulo = structured.get("titulo") or _extrair_titulo(soup, listing_text)
     descricao = structured.get("descricao") or _extrair_descricao(soup, listing_text)
     preco = structured.get("preco") or _extrair_preco(listing_text)
@@ -71,18 +68,6 @@ async def extrair_dados(page, url):
     }
     logger.info(f"EXTRAÇÃO FINALIZADA: Preço {preco}, Quartos {quartos}, Fotos {len(fotos)}")
     return dados
-
-
-def _pagina_tem_dados_de_imovel(soup, text: str) -> bool:
-    """Reject challenge/error pages instead of persisting them as empty listings."""
-    lowered = text.lower()
-    if any(marker in lowered for marker in ("403 forbidden", "vercel security checkpoint", "enable javascript to continue")):
-        return False
-    return bool(
-        soup.select_one("meta[property='og:title']")
-        or re.search(r"r\$\s*[\d.]+(?:,\d{2})?", text, re.I)
-        or re.search(r"\d+\s*(?:quartos?|dormit[óo]rios?)", text, re.I)
-    )
 
 
 def _flatten_json(value):

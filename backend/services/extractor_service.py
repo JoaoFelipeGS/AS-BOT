@@ -291,6 +291,9 @@ async def _is_antibot_checkpoint(page) -> bool:
             "ponto de verificação de segurança da vercel",
             "enable javascript to continue",
             "checking your browser",
+            "403 forbidden",
+            "access denied",
+            "too many requests",
         )
         return any(marker in title or marker in body_text for marker in markers)
     except Exception:

@@ -28,17 +28,22 @@ from backend.logging import logger
 from backend.browser_manager import browser_manager
 from backend.auth import create_token, require_auth
 from backend.config import settings
+from pydantic import BaseModel
 
 router = APIRouter()
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 @router.post("/login")
-def login(username: str, password: str):
-    if username != settings.admin_username or password != settings.admin_password:
+def login(payload: LoginRequest):
+    if payload.username != settings.admin_username or payload.password != settings.admin_password:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
 
     return {
-        "token": create_token(username),
-        "username": username,
+        "token": create_token(payload.username),
+        "username": payload.username,
         "message": "Login realizado com sucesso"
     }
 

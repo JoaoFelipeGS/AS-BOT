@@ -394,8 +394,9 @@ function App() {
   const [galleryImovel, setGalleryImovel] = useState<ImovelItem | null>(null)
 
   async function handleLogin(username: string, password: string) {
-    const response = await api.post('/login', null, {
-      params: { username, password },
+    const response = await api.post('/login', {
+      username,
+      password,
     })
     const token = response.data.token
     localStorage.setItem('as_marketplace_token', token)

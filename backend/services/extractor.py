@@ -1,6 +1,8 @@
 ﻿import os
 import re
 import asyncio
+import json
+from urllib.parse import urljoin, urlparse
 from typing import Tuple
 
 import backend.utils as utils
@@ -32,14 +34,24 @@ async def extrair_dados(page, url):
     html = await page.content()
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
+    structured = _extrair_dados_estruturados(soup, url)
+    listing_text = structured.get("text") or text
 
-    titulo = _extrair_titulo(soup, text)
-    descricao = _extrair_descricao(soup, text)
-    preco = _extrair_preco(text)
-    quartos, banheiros, garagem = _extrair_comodos(text)
-    area = _extrair_area(text)
-    endereco = _extrair_endereco(soup, text)
-    fotos = await _extrair_fotos(page, soup, url)
+    titulo = structured.get("titulo") or _extrair_titulo(soup, listing_text)
+    descricao = structured.get("descricao") or _extrair_descricao(soup, listing_text)
+    preco = structured.get("preco") or _extrair_preco(listing_text)
+    quartos, banheiros, garagem = _extrair_comodos(listing_text)
+    quartos = structured.get("quartos", quartos)
+    banheiros = structured.get("banheiros", banheiros)
+    garagem = structured.get("garagem", garagem)
+    area = structured.get("area") or _extrair_area(listing_text)
+    endereco = structured.get("endereco") or _extrair_endereco(soup, listing_text)
+    fotos = await _extrair_fotos(
+        page,
+        soup,
+        url,
+        preferred_urls=structured.get("fotos") or None,
+    )
 
     dados = {
         "titulo": titulo or "Imóvel",
@@ -55,6 +67,98 @@ async def extrair_dados(page, url):
     }
     logger.info(f"EXTRAÇÃO FINALIZADA: Preço {preco}, Quartos {quartos}, Fotos {len(fotos)}")
     return dados
+
+
+def _flatten_json(value):
+    if isinstance(value, list):
+        for item in value:
+            yield from _flatten_json(item)
+    elif isinstance(value, dict):
+        yield value
+        for item in value.values():
+            if isinstance(item, (dict, list)):
+                yield from _flatten_json(item)
+
+
+def _clean_url(value: str) -> str:
+    parsed = urlparse(value)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
+
+
+def _as_number(value):
+    if isinstance(value, (int, float)):
+        return value
+    if not value:
+        return 0
+    match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+    if not match:
+        return 0
+    return float(match.group(0).replace(".", "").replace(",", "."))
+
+
+def _extrair_dados_estruturados(soup, url):
+    """Extract the listing entity that matches the requested URL from JSON-LD."""
+    requested = _clean_url(url)
+    entities = []
+    for script in soup.select("script[type='application/ld+json']"):
+        try:
+            payload = json.loads(script.string or script.get_text())
+            entities.extend(_flatten_json(payload))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    candidates = []
+    for entity in entities:
+        entity_url = entity.get("url") or entity.get("@id")
+        item = entity.get("itemOffered")
+        if isinstance(item, dict):
+            merged = dict(item)
+            merged.update({key: value for key, value in entity.items() if key not in merged})
+            entity = merged
+            entity_url = entity.get("url") or entity.get("@id")
+        if entity_url and _clean_url(str(entity_url)) == requested:
+            candidates.append(entity)
+
+    if not candidates:
+        return {}
+
+    entity = max(candidates, key=lambda item: len(item.get("image", [])) if isinstance(item.get("image"), list) else 0)
+    offers = entity.get("offers") or {}
+    if isinstance(offers, list):
+        offers = offers[0] if offers else {}
+    address = entity.get("address") or {}
+    if isinstance(address, str):
+        address_text = address
+    else:
+        address_text = ", ".join(str(address.get(key)) for key in ("streetAddress", "addressLocality", "addressRegion") if address.get(key))
+
+    images = entity.get("image") or []
+    if isinstance(images, str):
+        images = [images]
+    images = [urljoin(url, image) for image in images if isinstance(image, str)]
+    bedrooms = int(_as_number(entity.get("numberOfBedrooms")))
+    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms")))
+    parking = 0
+    for feature in entity.get("amenityFeature") or []:
+        if isinstance(feature, dict) and any(word in str(feature.get("name", "")).lower() for word in ("garagem", "vaga", "parking")):
+            parking = int(_as_number(feature.get("value")))
+
+    area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea")
+    if isinstance(area, dict):
+        area = area.get("value")
+
+    return {
+        "titulo": entity.get("name") or "",
+        "descricao": entity.get("description") or "",
+        "preco": _as_number(offers.get("price") or entity.get("price")),
+        "quartos": bedrooms,
+        "banheiros": bathrooms,
+        "garagem": parking,
+        "area": int(_as_number(area)),
+        "endereco": address_text,
+        "fotos": list(dict.fromkeys(images)),
+        "text": " ".join(str(value) for value in (entity.get("name"), entity.get("description"), address_text)),
+    }
 
 
 def _extrair_titulo(soup, text: str) -> str:
@@ -148,34 +252,38 @@ def _extrair_endereco(soup, text: str) -> str:
     return ""
 
 
-async def _extrair_fotos(page, soup, url_imovel):
+async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
     imagens = []
     try:
-        for tag in soup.find_all(["img", "source"]):
-            for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
-                value = tag.get(attr)
-                if not value:
-                    continue
-                urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
-                for url in urls:
-                    if not url.startswith("http"):
+        if preferred_urls:
+            imagens.extend(preferred_urls)
+        else:
+            for tag in soup.find_all(["img", "source"]):
+                for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
+                    value = tag.get(attr)
+                    if not value:
                         continue
-                    if any(k in url.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                        continue
-                    if url not in imagens:
-                        imagens.append(url)
+                    urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
+                    for image_url in urls:
+                        if not image_url.startswith("http"):
+                            continue
+                        if any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                            continue
+                        if image_url not in imagens:
+                            imagens.append(image_url)
 
-        for _ in range(12):
-            try:
-                cards = await page.query_selector_all("img")
-                for card in cards:
-                    src = await card.get_attribute("src") or await card.get_attribute("data-src")
-                    if src and src.startswith("http") and "logo" not in src.lower() and src not in imagens:
-                        imagens.append(src)
-                await page.mouse.wheel(0, 500)
-                await asyncio.sleep(0.6)
-            except Exception:
-                break
+        if not preferred_urls:
+            for _ in range(12):
+                try:
+                    cards = await page.query_selector_all("img")
+                    for card in cards:
+                        src = await card.get_attribute("src") or await card.get_attribute("data-src")
+                        if src and src.startswith("http") and "logo" not in src.lower() and src not in imagens:
+                            imagens.append(src)
+                    await page.mouse.wheel(0, 500)
+                    await asyncio.sleep(0.6)
+                except Exception:
+                    break
 
         imagens = [img.split("?")[0] for img in imagens if img]
         imagens = list(dict.fromkeys(imagens))

@@ -16,6 +16,7 @@ from backend.config import settings
 from backend.logging import logger
 from backend.models import Imovel
 from backend.services.gemini_service import gemini_service
+from backend.stealth import stealth
 # --------------------------------------------
 
 class ExtractorService:
@@ -165,7 +166,14 @@ class ExtractorService:
                         f"Erro navegação: {e}"
                     )
 
+                if await _is_antibot_checkpoint(page):
+                    raise RuntimeError(
+                        "O site bloqueou a automação com um checkpoint anti-bot. "
+                        "A imobiliária precisa autorizar o acesso do bot ou fornecer uma rota de acesso autorizada."
+                    )
+
                 await legacy_utils.delay_async()
+                await stealth(page)
 
                 try:
                     await legacy_utils.scroll_humano(page)
@@ -272,4 +280,19 @@ class ExtractorService:
 
 
 extractor_service = ExtractorService()
+
+
+async def _is_antibot_checkpoint(page) -> bool:
+    try:
+        title = (await page.title()).lower()
+        body_text = (await page.locator("body").inner_text(timeout=5000)).lower()
+        markers = (
+            "vercel security checkpoint",
+            "ponto de verificação de segurança da vercel",
+            "enable javascript to continue",
+            "checking your browser",
+        )
+        return any(marker in title or marker in body_text for marker in markers)
+    except Exception:
+        return False
 

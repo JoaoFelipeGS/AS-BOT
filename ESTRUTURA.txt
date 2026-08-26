@@ -1,0 +1,223 @@
+📁 ESTRUTURA DO PROJETO FINALIZADO
+
+════════════════════════════════════════════════════════════════════════════════
+
+as_marketplace_bot_v2/
+│
+├── 📄 app.py ⭐ [PRINCIPAL]
+│   └─ Menu interativo principal
+│   └─ Orquestra todos os módulos
+│
+├── ⚙️ CONFIGURAÇÃO
+│   ├── config.py
+│   │   └─ Todas as configurações em um lugar
+│   │   └─ Delays, limites, timeouts
+│   │   └─ Variáveis de ambiente (Neon)
+│   │
+│   ├── .env (criar antes de executar)
+│   │   └─ DATABASE_URL=postgresql://...
+│   │
+│   └── .env-example
+│       └─ Template para referência
+│
+├── 🔧 MÓDULOS CORE
+│   │
+│   ├── utils.py
+│   │   └─ delay() - delays aleatórios
+│   │   └─ limpar() - normalização de texto
+│   │   └─ tipo_humano() - digitação lenta
+│   │   └─ validar_imovel() - validação de dados
+│   │   └─ setup_logger() - logs estruturados
+│   │
+│   ├── database.py ⭐ [NEON POSTGRESQL]
+│   │   ├─ Tabela: imoveis
+│   │   ├─ Tabela: fila_publicacao
+│   │   ├─ Tabela: bloqueios
+│   │   └─ Tabela: logs
+│   │
+│   ├── extractor.py
+│   │   └─ extrair_dados(page, url)
+│   │   └─ _extrair_titulo()
+│   │   └─ _extrair_preco()
+│   │   └─ _extrair_descricao()
+│   │   └─ _extrair_endereco()
+│   │   └─ _extrair_numero()
+│   │   └─ _extrair_e_salvar_imagens()
+│   │
+│   ├── error_handler.py
+│   │   └─ verificar_bloqueio(page)
+│   │   └─ tratar_bloqueio()
+│   │   └─ verificar_bloqueio_ativo()
+│   │   └─ validar_antes_publicar()
+│   │
+│   ├── facebook_handler.py
+│   │   └─ publicar_imovel(page, imovel_id, fila_id)
+│   │   └─ _fazer_upload_imagens()
+│   │   └─ _preencher_campo()
+│   │   └─ _preencher_textarea()
+│   │   └─ _formatar_descricao()
+│   │
+│   ├── queue_manager.py
+│   │   └─ adicionar_fila()
+│   │   └─ obter_proxima_publicacao()
+│   │   └─ mostrar_fila()
+│   │   └─ listar_fila()
+│   │   └─ remover_fila()
+│   │   └─ reprogramar_fila()
+│   │   └─ limpar_erros()
+│   │
+│   └── dashboard.py
+│       ├─ mostrar_menu() - Menu principal
+│       ├─ mostrar_fila_detalhada()
+│       ├─ mostrar_estatisticas()
+│       ├─ remover_item_menu()
+│       ├─ reprogramar_menu()
+│       ├─ limpar_erros_menu()
+│       ├─ ver_logs_menu()
+│       └─ iniciar_dashboard() - UI interativa
+│
+├── 📚 DOCUMENTAÇÃO
+│   │
+│   ├── README.md ⭐ [INÍCIO]
+│   │   └─ Visão geral do projeto
+│   │   └─ Features principais
+│   │   └─ Setup rápido
+│   │   └─ Menu de uso
+│   │   └─ Proteção contra bloqueios
+│   │
+│   ├── SETUP.md ⭐ [INSTRUÇÕES DETALHADAS]
+│   │   ├─ 1. Criar conta Neon
+│   │   ├─ 2. Configurar variáveis
+│   │   ├─ 3. Instalar dependências
+│   │   ├─ 4. Executar
+│   │   ├─ Como usar (passo-a-passo)
+│   │   ├─ Tratamento de bloqueios
+│   │   ├─ FAQ (perguntas frequentes)
+│   │   ├─ Segurança
+│   │   └─ Troubleshooting
+│   │
+│   ├── START.txt ⭐ [QUICK START - COMECE AQUI]
+│   │   ├─ 4 passos principais
+│   │   ├─ Menu resumido
+│   │   ├─ Limites de segurança
+│   │   └─ Links para documentação
+│   │
+│   ├── ARQUITETURA.md
+│   │   ├─ Componentes principais
+│   │   ├─ Pipeline de dados
+│   │   ├─ Fluxo de extração
+│   │   ├─ Fluxo de publicação
+│   │   ├─ Fluxo de proteção
+│   │   ├─ Banco de dados
+│   │   ├─ Delays "humanos"
+│   │   └─ Validações
+│   │
+│   └── GUIA_PASSO_A_PASSO.md
+│       ├─ Setup inicial (5 min)
+│       ├─ Primeira execução (10 min)
+│       ├─ Extração de imóveis (passo-a-passo)
+│       ├─ Publicação (passo-a-passo)
+│       ├─ Próximas publicações
+│       ├─ Dashboard avançado
+│       └─ Cenários especiais
+│
+├── 📦 DEPENDÊNCIAS
+│   ├── requirements.txt
+│   │   ├─ playwright - Automação de navegador
+│   │   ├─ beautifulsoup4 - Parsing HTML
+│   │   ├─ requests - HTTP requests
+│   │   ├─ lxml - Parser XML/HTML
+│   │   ├─ fake-useragent - User-Agent variado
+│   │   ├─ psycopg2-binary - PostgreSQL driver
+│   │   └─ python-dotenv - Variáveis de ambiente
+│   │
+│   └─ Para instalar:
+│       pip install -r requirements.txt
+│       playwright install chromium
+│
+├── 📂 RUNTIME FOLDERS (criados automaticamente)
+│   │
+│   ├── data/
+│   │   └─ imoveis.json - Backup local
+│   │
+│   ├── images/
+│   │   └─ Casa_Alto_Padrão/
+│   │       ├─ foto_1.jpg
+│   │       ├─ foto_2.jpg
+│   │       └─ ... (até 10 por imóvel)
+│   │
+│   ├── logs/
+│   │   └─ bot_20260520_143022.log
+│   │       └─ Histórico completo de operações
+│   │
+│   ├── perfil_playwright/
+│   │   └─ Dados persistentes do Chrome
+│   │       └─ Mantém login, cookies, histórico
+│   │
+│   └── profile/
+│       └─ Dados de browser (backup)
+│
+└── 🔑 BANCO DE DADOS (Neon)
+    │
+    └─ 4 Tabelas PostgreSQL:
+       ├─ imoveis
+       │  ├─ id, url (unique), titulo, preco
+       │  ├─ descricao, endereco
+       │  ├─ quartos, banheiros, garagem, area
+       │  ├─ imagens_json, criado_em, atualizado_em
+       │
+       ├─ fila_publicacao
+       │  ├─ id, imovel_id (FK), status
+       │  ├─ agendado_para, publicado_em
+       │  ├─ tentativas, url_facebook
+       │  ├─ mensagem_erro, criado_em, atualizado_em
+       │
+       ├─ bloqueios
+       │  ├─ id, tipo, detectado_em
+       │  ├─ desbloqueado_em, motivo, criado_em
+       │
+       └─ logs
+          ├─ id, tipo, mensagem
+          ├─ detalhes (JSON), criado_em
+
+════════════════════════════════════════════════════════════════════════════════
+
+ARQUIVOS PRINCIPAIS PARA COMEÇAR:
+
+⭐⭐⭐ Leia nesta ordem:
+1. START.txt (1 min)
+2. README.md (5 min)
+3. SETUP.md (10 min)
+4. GUIA_PASSO_A_PASSO.md (15 min)
+5. Execute: python app.py
+
+════════════════════════════════════════════════════════════════════════════════
+
+TAMANHO TOTAL DO PROJETO:
+
+Python Code: ~2500 linhas
+Documentation: ~800 linhas
+Config Files: 50 linhas
+════════════════════════════════════════════════════════════════════════════════
+
+DEPENDÊNCIAS EXTERNAS:
+
+✓ Neon (banco grátis)
+✓ Python 3.8+
+✓ Chrome/Chromium
+✓ Conexão de internet
+
+════════════════════════════════════════════════════════════════════════════════
+
+PRÓXIMOS PASSOS:
+
+1. Leia START.txt (2 min)
+2. Crie conta em https://console.neon.tech/ (5 min)
+3. Configure .env com CONNECTION STRING (1 min)
+4. `pip install -r requirements.txt` (3 min)
+5. `playwright install chromium` (2 min)
+6. `python app.py` 🚀
+
+Total: ~15 minutos até primeiro uso!
+
+════════════════════════════════════════════════════════════════════════════════

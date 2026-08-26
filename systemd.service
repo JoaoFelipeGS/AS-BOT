@@ -1,0 +1,16 @@
+[Unit]
+Description=AS Marketplace Bot SaaS
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/as_marketplace_bot_v2
+ExecStart=/opt/as_marketplace_bot_v2/.venv/bin/python /opt/as_marketplace_bot_v2/start_prod.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=APP_HOST=0.0.0.0
+Environment=APP_PORT=8000
+
+[Install]
+WantedBy=multi-user.target

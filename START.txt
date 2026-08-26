@@ -1,0 +1,92 @@
+🚀 START AQUI - PRIMEIROS PASSOS
+
+════════════════════════════════════════════════════════
+
+1️⃣ CRIAR CONTA NEON (5 minutos)
+
+   • Acesse: https://console.neon.tech/
+   • Clique em "Sign Up" (gratuito)
+   • Crie um novo projeto
+   • Na aba "Connection string", copie:
+     postgresql://seu_user:sua_senha@seu_host/seu_db
+
+════════════════════════════════════════════════════════
+
+2️⃣ CONFIGURAR BOT (2 minutos)
+
+   Windows PowerShell:
+   
+   cd c:\Users\Manuela\Desktop\as_marketplace_bot_v2
+   
+   Crie arquivo .env:
+   
+   DATABASE_URL=postgresql://seu_user:sua_senha@seu_host/seu_db
+   
+   Ou edite config.py:
+   
+   NEON_DATABASE_URL = "postgresql://..."
+
+════════════════════════════════════════════════════════
+
+3️⃣ INSTALAR DEPENDÊNCIAS (3 minutos)
+
+   PowerShell:
+   
+   pip install -r requirements.txt
+   playwright install chromium
+
+════════════════════════════════════════════════════════
+
+4️⃣ EXECUTAR (sempre)
+
+   PowerShell:
+   
+   python app.py
+
+════════════════════════════════════════════════════════
+
+📖 MENU PRINCIPAL
+
+   1. 📥 Extrair imóveis
+      → Navegue AS Imobiliária
+      → CTRL + CLIQUE nos imóveis
+      → Pressione ENTER
+      → Dados salvos no Neon!
+
+   2. 📤 Publicar no Facebook
+      → Bot preenche 80% automaticamente
+      → Você valida e publica
+      → Próxima agendada 3h depois
+
+   3. 📦 Ver fila
+      → Status de todos os imóveis
+      → Remove, reprograma conforme necessário
+
+   4. 📊 Dashboard
+      → Estatísticas, logs, gerenciamento
+
+════════════════════════════════════════════════════════
+
+⚠️ IMPORTANTE
+
+✅ Máximo 3 anúncios por dia (Facebook bloqueia se passar)
+✅ Intervalo de 3+ horas entre publicações
+✅ Certifique-se que imóvel tem: Título, Preço, Descrição, Imagens
+✅ Se Facebook pedir CAPTCHA, resolva manualmente e pressione ENTER
+
+❌ NÃO publique muitos anúncios rapidinho
+❌ NÃO compartilhe sua CONNECTION STRING do Neon
+❌ NÃO ignore avisos de bloqueio
+
+════════════════════════════════════════════════════════
+
+❓ DÚVIDAS?
+
+Leia: README.md (visão geral)
+Leia: SETUP.md (instruções detalhadas + FAQ)
+
+════════════════════════════════════════════════════════
+
+Ready? Execute: python app.py
+
+Good luck! 🚀

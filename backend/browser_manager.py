@@ -11,6 +11,14 @@ logger = logging.getLogger("bot")
 
 
 def get_playwright_browsers_path() -> str:
+    configured = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
+    if configured and configured.strip():
+        return configured.strip()
+
+    render_project = Path("/opt/render/project")
+    if os.getenv("RENDER") and render_project.exists():
+        return str(render_project / ".cache" / "ms-playwright")
+
     home = Path.home()
     if sys.platform.startswith("win"):
         return str(home / "AppData" / "Local" / "ms-playwright")

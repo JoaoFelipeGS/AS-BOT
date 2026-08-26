@@ -20,9 +20,16 @@ except ImportError:
 # =========================================================
 # 2. FIXES PARA WINDOWS E PLAYWRIGHT
 # =========================================================
-# Define a pasta correta do Playwright para cada sistema operacional.
-# No Render/Linux, isso deve apontar para ~/.cache/ms-playwright e não para AppData\Local.
+# Render usa /opt/render/project e não o diretório home do usuário.
 def get_playwright_browsers_path() -> str:
+    configured = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
+    if configured and configured.strip():
+        return configured.strip()
+
+    render_project = Path("/opt/render/project")
+    if os.getenv("RENDER") and render_project.exists():
+        return str(render_project / ".cache" / "ms-playwright")
+
     home = Path.home()
     if sys.platform.startswith("win"):
         return str(home / "AppData" / "Local" / "ms-playwright")

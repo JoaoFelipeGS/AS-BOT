@@ -1,11 +1,20 @@
 import asyncio
 import os
 import re
-import requests
+from openai import OpenAI
 from backend.logging import logger
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+
+SYSTEM_INSTRUCTIONS = (
+    "Você é um redator especializado em anúncios de imóveis para o Facebook Marketplace. "
+    "Você reescreve descrições de imóveis no formato de anúncio, mantendo TODAS as "
+    "informações originais (preço, endereço, metragem, número de quartos, banheiros, "
+    "vagas de garagem, diferenciais, etc). Você NUNCA inventa dados que não estão no "
+    "texto original. Você responde APENAS com o anúncio finalizado, sem comentários, "
+    "sem introduções como 'Aqui está' e sem explicações sobre o que você fez."
+)
 
 
 class GeminiService:
@@ -20,41 +29,21 @@ class GeminiService:
             return None
         model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Você é um redator especializado em anúncios de imóveis para o Facebook Marketplace. "
-                        "Você reescreve descrições de imóveis no formato de anúncio, mantendo TODAS as "
-                        "informações originais (preço, endereço, metragem, número de quartos, banheiros, "
-                        "vagas de garagem, diferenciais, etc). Você NUNCA inventa dados que não estão no "
-                        "texto original. Você responde APENAS com o anúncio finalizado, sem comentários, "
-                        "sem introduções como 'Aqui está' e sem explicações sobre o que você fez."
-                    )
-                },
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.4
-        }
-
         try:
-            r = requests.post(GROQ_URL, headers=headers, json=payload, timeout=timeout)
-
-            if r.status_code != 200:
-                logger.error(f"Groq error HTTP {r.status_code} para o modelo configurado")
-                return None
-
-            return r.json()["choices"][0]["message"]["content"]
+            client = OpenAI(
+                api_key=api_key,
+                base_url=GROQ_BASE_URL,
+                timeout=timeout,
+            )
+            response = client.responses.create(
+                input=prompt,
+                instructions=SYSTEM_INSTRUCTIONS,
+                model=model,
+            )
+            return response.output_text
 
         except Exception as e:
-            logger.error(f"Request error: {e}")
+            logger.error(f"Groq request failed: {type(e).__name__}")
             return None
 
     # =========================

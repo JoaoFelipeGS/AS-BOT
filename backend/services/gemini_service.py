@@ -4,7 +4,6 @@ import re
 import requests
 from backend.logging import logger
 
-API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
@@ -14,8 +13,13 @@ class GeminiService:
     # REQUEST
     # =========================
     def _post_request(self, prompt: str, timeout: int = 60):
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not api_key:
+            logger.warning("Groq não configurado: GROQ_API_KEY ausente")
+            return None
+
         headers = {
-            "Authorization": f"Bearer {API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
 
@@ -42,7 +46,7 @@ class GeminiService:
             r = requests.post(GROQ_URL, headers=headers, json=payload, timeout=timeout)
 
             if r.status_code != 200:
-                logger.error(f"Groq error {r.status_code}: {r.text}")
+                logger.error(f"Groq error HTTP {r.status_code}")
                 return None
 
             return r.json()["choices"][0]["message"]["content"]

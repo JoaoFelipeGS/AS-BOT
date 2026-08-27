@@ -67,18 +67,19 @@ else:
     BUNDLE_DIR = BASE_DIR
 
 # --- CARREGAMENTO DO .ENV ---
-# Tenta carregar do pacote embutido primeiro, depois da pasta externa
+# Em produção, as variáveis vêm do ambiente do Render; localmente, do arquivo .env.
 env_path_internal = BUNDLE_DIR / ".env"
 env_path_external = BASE_DIR / ".env"
 
 if env_path_internal.exists():
     load_dotenv(dotenv_path=env_path_internal)
-    logger.info(f"✅ API Key carregada do pacote embutido")
 elif env_path_external.exists():
     load_dotenv(dotenv_path=env_path_external)
-    logger.info(f"✅ API Key carregada de arquivo externo")
+
+if os.getenv("GROQ_API_KEY"):
+    logger.info("✅ GROQ_API_KEY configurada")
 else:
-    logger.error("❌ API Key não encontrada! O sistema não funcionará corretamente.")
+    logger.warning("⚠️ GROQ_API_KEY não configurada; a descrição original será mantida")
 
 # =========================================================
 # 4. IMPORTS DO BACKEND (Depois do load_dotenv para carregar as keys)

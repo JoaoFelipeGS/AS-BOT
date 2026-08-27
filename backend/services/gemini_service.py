@@ -5,6 +5,7 @@ import requests
 from backend.logging import logger
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 
 
 class GeminiService:
@@ -17,6 +18,7 @@ class GeminiService:
         if not api_key:
             logger.warning("Groq não configurado: GROQ_API_KEY ausente")
             return None
+        model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -24,7 +26,7 @@ class GeminiService:
         }
 
         payload = {
-            "model": "llama-3.3-70b-versatile",
+            "model": model,
             "messages": [
                 {
                     "role": "system",
@@ -46,7 +48,7 @@ class GeminiService:
             r = requests.post(GROQ_URL, headers=headers, json=payload, timeout=timeout)
 
             if r.status_code != 200:
-                logger.error(f"Groq error HTTP {r.status_code}")
+                logger.error(f"Groq error HTTP {r.status_code} para o modelo configurado")
                 return None
 
             return r.json()["choices"][0]["message"]["content"]

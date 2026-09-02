@@ -332,7 +332,7 @@ function GalleryModal({
 
 function LoginScreen({ onLogin }: { onLogin: (username: string, password: string) => Promise<void> }) {
   const [username, setUsername] = useState('admin')
-  const [password, setPassword] = useState('admin123')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -371,7 +371,7 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-sky-500"
-            placeholder="Senha"
+            placeholder="Senha configurada no ambiente"
           />
           {error && <p className="text-sm text-rose-400">{error}</p>}
           <button

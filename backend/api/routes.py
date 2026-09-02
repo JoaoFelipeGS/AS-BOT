@@ -82,7 +82,9 @@ def _normalize_imagens(imagens):
     # 2. LOCALIZAR A PASTA NO DISCO
     # images/ fica sempre ao lado do .exe (ou raiz do projeto em dev)
     try:
-        images_root = BASE_DIR / "images"
+        images_root = Path(settings.dir_images)
+        if not images_root.is_absolute():
+            images_root = BASE_DIR / images_root
         target_folder = images_root / folder_id
 
         if target_folder.exists() and target_folder.is_dir():

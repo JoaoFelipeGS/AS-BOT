@@ -135,7 +135,9 @@ app.include_router(router, prefix="/api")
 # =========================================================
 
 # 1. Pasta de Imagens — Sempre ao lado do .exe (gravável)
-IMAGES_DIR = BASE_DIR / "images"
+IMAGES_DIR = Path(settings.dir_images)
+if not IMAGES_DIR.is_absolute():
+    IMAGES_DIR = BASE_DIR / IMAGES_DIR
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 logger.info(f"🖼️  Servindo imagens de: {IMAGES_DIR}")

@@ -8,6 +8,7 @@ __pycache__/
 .env
 .env.*
 .venv/
+venv/
 
 # Node
 node_modules/
@@ -19,6 +20,7 @@ build/
 logs/
 backend/logs/
 frontend/.cache/
+images/
 
 # Playwright profiles and browser state
 perfil_playwright/

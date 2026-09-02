@@ -413,8 +413,9 @@ function App() {
   useEffect(() => {
     const token = localStorage.getItem('as_marketplace_token')
     if (token) {
-      setIsAuthenticated(true)
-      refreshData()
+      refreshData().then((authenticated) => {
+        setIsAuthenticated(authenticated)
+      })
     }
   }, [])
 
@@ -435,7 +436,7 @@ function App() {
     connectWS()
   }, [])
 
-  async function refreshData() {
+  async function refreshData(): Promise<boolean> {
     try {
       const [statsRes, queueRes, imoveisRes] = await Promise.all([
         api.get('/dashboard'),
@@ -445,8 +446,14 @@ function App() {
       setStats(statsRes.data)
       setQueue(queueRes.data)
       setImoveis(imoveisRes.data)
+      return true
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        localStorage.removeItem('as_marketplace_token')
+        setIsAuthenticated(false)
+      }
       console.error('Erro ao carregar dados', error)
+      return false
     }
   }
 

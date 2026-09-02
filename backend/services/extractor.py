@@ -300,41 +300,38 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
     try:
         if preferred_urls:
             imagens.extend(preferred_urls)
-            for tag in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
-                image_url = tag.get("content")
-                if image_url:
-                    imagens.append(urljoin(url_imovel, image_url))
-            for script in soup.find_all("script"):
-                for image_url in re.findall(r"https?://[^\"'\\s]+?\.(?:jpe?g|png|webp)(?:\?[^\"'\\s]+)?", script.get_text(), re.I):
-                    if image_url not in imagens:
-                        imagens.append(image_url)
-        else:
-            for tag in soup.find_all(["img", "source"]):
-                for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
-                    value = tag.get(attr)
-                    if not value:
-                        continue
-                    urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
-                    for image_url in urls:
-                        if not image_url.startswith("http"):
-                            continue
-                        if any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                            continue
-                        if image_url not in imagens:
-                            imagens.append(image_url)
 
-        if not preferred_urls:
-            for _ in range(12):
-                try:
-                    cards = await page.query_selector_all("img")
-                    for card in cards:
-                        src = await card.get_attribute("src") or await card.get_attribute("data-src")
-                        if src and src.startswith("http") and "logo" not in src.lower() and src not in imagens:
-                            imagens.append(src)
-                    await page.mouse.wheel(0, 500)
-                    await asyncio.sleep(0.6)
-                except Exception:
-                    break
+        for tag in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
+            image_url = tag.get("content")
+            if image_url:
+                imagens.append(urljoin(url_imovel, image_url))
+
+        for script in soup.find_all("script"):
+            for image_url in re.findall(r"https?://[^\"'\\s]+?\.(?:jpe?g|png|webp)(?:\?[^\"'\\s]+)?", script.get_text(), re.I):
+                imagens.append(image_url)
+
+        # JSON-LD costuma trazer apenas a capa; complemente com a galeria HTML.
+        for tag in soup.find_all(["img", "source"]):
+            for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
+                value = tag.get(attr)
+                if not value:
+                    continue
+                urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
+                for image_url in urls:
+                    if image_url.startswith("http") and not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                        imagens.append(image_url)
+
+        for _ in range(12):
+            try:
+                cards = await page.query_selector_all("img")
+                for card in cards:
+                    src = await card.get_attribute("src") or await card.get_attribute("data-src")
+                    if src and src.startswith("http") and not any(k in src.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                        imagens.append(src)
+                await page.mouse.wheel(0, 500)
+                await asyncio.sleep(0.6)
+            except Exception:
+                break
 
         imagens = [img.split("?")[0] for img in imagens if img and not any(k in img.lower() for k in ("logo", "avatar", "icon", "badge"))]
         imagens = list(dict.fromkeys(imagens))

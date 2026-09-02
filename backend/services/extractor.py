@@ -333,8 +333,24 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
             except Exception:
                 break
 
-        imagens = [img.split("?")[0] for img in imagens if img and not any(k in img.lower() for k in ("logo", "avatar", "icon", "badge"))]
-        imagens = list(dict.fromkeys(imagens))
+        imagens_filtradas = []
+        urls_vistas = set()
+        urls_preferidas = {imagem.split("?")[0] for imagem in (preferred_urls or [])}
+        termos_descartados = ("logo", "avatar", "icon", "badge", "banner", "favicon", "sprite", "tracking")
+        termos_imovel = ("/properties/", "/property/", "/images/", "/uploads/", "/media/", "imovel", "foto", "photo", "gallery", "listing")
+        for imagem in imagens:
+            imagem = imagem.split("?")[0]
+            imagem_lower = imagem.lower()
+            if not imagem or imagem in urls_vistas or any(termo in imagem_lower for termo in termos_descartados):
+                continue
+            urls_vistas.add(imagem)
+            prioridade = sum(1 for termo in termos_imovel if termo in imagem_lower)
+            if imagem in urls_preferidas:
+                prioridade += 100
+            imagens_filtradas.append((prioridade, len(imagens_filtradas), imagem))
+
+        # URLs do anúncio vêm antes de banners e imagens decorativas.
+        imagens = [imagem for _, _, imagem in sorted(imagens_filtradas, key=lambda item: (-item[0], item[1]))]
 
         # O Render gratuito não possui disco persistente. Mantemos as URLs no
         # Neon e baixamos os arquivos somente durante a publicação.

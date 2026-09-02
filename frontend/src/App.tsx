@@ -345,10 +345,16 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-sky-500/10">
-        <p className="text-xs uppercase tracking-[0.3em] text-sky-500 font-bold">AS Marketplace SaaS</p>
-        <h1 className="mt-4 text-3xl font-bold">Acesso ao painel</h1>
+    <div className="brand-shell min-h-screen text-slate-100 flex items-center justify-center p-6">
+      <div className="brand-login w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-sky-500/10">
+        <div className="flex items-center gap-3">
+          <img src="/onora-logo.svg" alt="onora marktplace" className="brand-mark h-14 w-14 rounded-2xl" />
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-sky-400 font-bold">onora</p>
+            <p className="text-sm text-slate-400">marktplace</p>
+          </div>
+        </div>
+        <h1 className="mt-8 text-3xl font-bold">Acesso ao painel</h1>
         <div className="mt-6 space-y-4">
           <input
             value={username}
@@ -538,13 +544,16 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+    <div className="brand-shell min-h-screen text-slate-100 font-sans">
       <div className="max-w-[1600px] mx-auto px-4 py-6">
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-widest text-sky-500 font-bold mb-1">SaaS Control Panel</p>
-            <h1 className="text-4xl font-bold tracking-tight">Facebook <span className="text-sky-500">Marketplace</span></h1>
+          <div className="flex items-center gap-4">
+            <img src="/onora-logo.svg" alt="onora marktplace" className="brand-mark h-16 w-16 rounded-2xl shadow-lg shadow-blue-950/30" />
+            <div>
+            <p className="text-xs uppercase tracking-widest text-sky-400 font-bold mb-1">onora marktplace</p>
+            <h1 className="text-4xl font-bold tracking-tight">onora <span className="text-sky-400">marktplace</span></h1>
             <p className="text-slate-400">Extração inteligente e automação de publicações.</p>
+            </div>
           </div>
           <div className="flex flex-col gap-2 items-end">
             <div className="rounded-full bg-slate-900 border border-slate-800 px-3 py-1 text-[10px] font-bold uppercase text-slate-400">

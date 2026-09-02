@@ -339,25 +339,9 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
         imagens = [img.split("?")[0] for img in imagens if img and not any(k in img.lower() for k in ("logo", "avatar", "icon", "badge"))]
         imagens = list(dict.fromkeys(imagens))
 
-        referencia = url_imovel.split("/")[-1].split("?")[0]
-        pasta_imovel = os.path.join(settings.dir_images, referencia)
-        os.makedirs(pasta_imovel, exist_ok=True)
-
-        arquivos_salvos = []
-        for idx, img_url in enumerate(imagens[:12]):
-            try:
-                ext = ".jpg"
-                if img_url.lower().endswith(".png"):
-                    ext = ".png"
-                elif img_url.lower().endswith(".webp"):
-                    ext = ".webp"
-                destino = os.path.join(pasta_imovel, f"{idx + 1}{ext}")
-                if utils.baixar_imagem(img_url, destino) and utils.validar_imagem(destino):
-                    arquivos_salvos.append(os.path.abspath(destino))
-            except Exception:
-                continue
-
-        return arquivos_salvos
+        # O Render gratuito não possui disco persistente. Mantemos as URLs no
+        # Neon e baixamos os arquivos somente durante a publicação.
+        return imagens[:12]
 
     except Exception as e:
         logger.warning(f"Erro fotos multi-site: {e}")

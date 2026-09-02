@@ -69,40 +69,16 @@ def _normalize_imagens(imagens):
     if not imagens:
         return []
 
-    # 1. EXTRAIR O ID DA PASTA
-    folder_id = None
-    raw_text = str(imagens)
-    match = re.search(r'images[\\/]+([a-zA-Z0-9_-]+)', raw_text)
-    if match:
-        folder_id = match.group(1)
-    
-    if not folder_id:
+    if isinstance(imagens, str):
+        try:
+            imagens = json.loads(imagens)
+        except json.JSONDecodeError:
+            imagens = [imagens]
+
+    if not isinstance(imagens, list):
         return []
 
-    # 2. LOCALIZAR A PASTA NO DISCO
-    # images/ fica sempre ao lado do .exe (ou raiz do projeto em dev)
-    try:
-        images_root = Path(settings.dir_images)
-        if not images_root.is_absolute():
-            images_root = BASE_DIR / images_root
-        target_folder = images_root / folder_id
-
-        if target_folder.exists() and target_folder.is_dir():
-            extensoes_validas = ('.jpg', '.jpeg', '.png', '.webp')
-            arquivos_na_pasta = [
-                f.name for f in target_folder.iterdir() 
-                if f.suffix.lower() in extensoes_validas
-            ]
-            
-            if arquivos_na_pasta:
-                urls_finais = [f"/static/images/{folder_id}/{foto}" for foto in arquivos_na_pasta]
-                return urls_finais
-        else:
-            logger.warning(f"Pasta de imagens não encontrada: {target_folder}")
-    except Exception as e:
-        logger.error(f"Erro ao ler pasta de imagens: {e}")
-
-    return []
+    return [imagem for imagem in imagens if isinstance(imagem, str) and imagem.startswith(('http://', 'https://'))]
 
 def _prepare_imovel(imovel: Imovel):
     if not imovel: return None

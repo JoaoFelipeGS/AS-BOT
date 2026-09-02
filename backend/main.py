@@ -134,15 +134,7 @@ app.include_router(router, prefix="/api")
 # 5. STATIC FILES & FRONTEND INTEGRATION
 # =========================================================
 
-# 1. Pasta de Imagens — Sempre ao lado do .exe (gravável)
-IMAGES_DIR = Path(settings.dir_images)
-if not IMAGES_DIR.is_absolute():
-    IMAGES_DIR = BASE_DIR / IMAGES_DIR
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/static/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
-logger.info(f"🖼️  Servindo imagens de: {IMAGES_DIR}")
-
-# 2. Pasta do Frontend Compilado
+# Pasta do Frontend Compilado
 # Se for .exe, tenta pegar da pasta embutida (BUNDLE_DIR), senão da pasta raiz (BASE_DIR)
 BUILD_DIR = BUNDLE_DIR / "dist" if (getattr(sys, 'frozen', False) and (BUNDLE_DIR / "dist").exists()) else (BASE_DIR / "dist")
 

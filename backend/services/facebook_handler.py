@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 import random
+import tempfile
+from urllib.parse import urlparse
 from playwright.async_api import Page
 from backend.config import settings
 from backend.utils import setup_logger
@@ -137,21 +139,33 @@ async def _achar_input_original(page, termos):
         except: continue
     return None
 
-async def _upload_imagens_por_referencia(page, url_imovel, imovel_id):
+async def _upload_imagens_por_referencia(page, image_urls, imovel_id):
     try:
-        if not url_imovel: return False
-        referencia = url_imovel.split("/")[-1].split("?")[0]
-        pasta_fotos = os.path.join(settings.dir_images, referencia)
-        if not os.path.exists(pasta_fotos): return False
+        if isinstance(image_urls, str):
+            try:
+                image_urls = json.loads(image_urls)
+            except json.JSONDecodeError:
+                image_urls = []
+        if not image_urls: return False
 
-        arquivos = [os.path.abspath(os.path.join(pasta_fotos, f)) for f in os.listdir(pasta_fotos) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
-        if not arquivos: return False
+        with tempfile.TemporaryDirectory(prefix=f"onora-imob-{imovel_id}-") as temp_dir:
+            arquivos = []
+            for index, image_url in enumerate(image_urls[:12]):
+                if not isinstance(image_url, str) or not image_url.startswith(('http://', 'https://')):
+                    continue
+                suffix = os.path.splitext(urlparse(image_url).path)[1].lower()
+                if suffix not in ('.jpg', '.jpeg', '.png', '.webp'):
+                    suffix = '.jpg'
+                destino = os.path.join(temp_dir, f"{index + 1}{suffix}")
+                if utils.baixar_imagem(image_url, destino) and utils.validar_imagem(destino):
+                    arquivos.append(destino)
+            if not arquivos: return False
 
-        input_file = page.locator("input[type='file']").first
-        await input_file.wait_for(state="attached", timeout=20000)
-        await input_file.evaluate("el => { el.style.display = 'block'; el.style.visibility = 'visible'; }")
-        await input_file.set_input_files(arquivos)
-        return True
+            input_file = page.locator("input[type='file']").first
+            await input_file.wait_for(state="attached", timeout=20000)
+            await input_file.evaluate("el => { el.style.display = 'block'; el.style.visibility = 'visible'; }")
+            await input_file.set_input_files(arquivos)
+            return True
     except Exception as e:
         logger.error(f"Erro upload: {e}")
         return False
@@ -167,8 +181,7 @@ async def publicar_imovel(page: Page, imovel_id: int, fila_id: int, dados_imovel
             await asyncio.sleep(7)
 
             # 1. FOTOS
-            url_imovel = dados_imovel.get('url', '')
-            if await _upload_imagens_por_referencia(page, url_imovel, imovel_id):
+            if await _upload_imagens_por_referencia(page, dados_imovel.get('imagens_json', []), imovel_id):
                 logger.info(f"[{imovel_id}] ✅ Fotos enviadas.")
                 await asyncio.sleep(10) 
             else:

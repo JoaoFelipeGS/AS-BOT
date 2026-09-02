@@ -67,8 +67,8 @@ function getImageUrl(path: string) {
 
 function ViewDashboard({ stats }: { stats: DashboardStats | null }) {
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="dashboard-view space-y-6 animate-in fade-in duration-500">
+      <section className="metric-grid grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {stats ? [
           { label: 'Extraídos', value: stats.total_extraidos },
           { label: 'Publicados', value: stats.total_publicados },
@@ -77,9 +77,10 @@ function ViewDashboard({ stats }: { stats: DashboardStats | null }) {
           { label: 'Taxa de sucesso', value: `${stats.taxa_sucesso}%` },
         ].map(item => <DashboardCard key={item.label} label={item.label} value={item.value} />) : <p>Carregando...</p>}
       </section>
-      <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-        <h2 className="text-xl font-semibold mb-4">Resumo do Sistema</h2>
-        <p className="text-slate-400">Sua automação está ativa. Use o menu lateral para navegar entre extração, revisão e fila.</p>
+      <div className="welcome-panel rounded-3xl border border-slate-800 bg-slate-900 p-6">
+        <p className="eyebrow">Central de operações</p>
+        <h2 className="text-2xl font-semibold mb-2">Seu inventário, em movimento.</h2>
+        <p className="text-slate-400">Acompanhe imóveis, revise anúncios e organize publicações em um só lugar.</p>
       </div>
     </div>
   )
@@ -102,12 +103,15 @@ function ViewExtract({
 }) {
   const liveLogs = [...logs].slice(0, 30).reverse()
   return (
-    <section className="relative rounded-3xl border border-slate-800 bg-slate-900 p-6 space-y-4 animate-in slide-in-from-bottom-4 duration-500 overflow-hidden">
+    <section className="extract-panel relative rounded-3xl border border-slate-800 bg-slate-900 p-6 space-y-4 animate-in slide-in-from-bottom-4 duration-500 overflow-hidden">
       <div className="mb-4">
-        <h2 className="text-xl font-semibold">Nova Extração</h2>
+        <p className="eyebrow">Entrada de dados</p>
+        <h2 className="text-2xl font-semibold">Nova extração</h2>
         <p className="text-slate-400">Cole as URLs dos imóveis abaixo para iniciar a captura.</p>
       </div>
+      <label className="field-label" htmlFor="property-urls">URLs dos imóveis</label>
       <textarea
+        id="property-urls"
         value={urls}
         onChange={(e) => setUrls(e.target.value)}
         rows={8}
@@ -120,7 +124,7 @@ function ViewExtract({
         disabled={isExtracting}
         className={`w-full rounded-3xl py-4 font-bold text-slate-950 transition-all ${isExtracting ? 'bg-slate-600 cursor-not-allowed' : 'bg-sky-500 hover:bg-sky-400 shadow-lg shadow-sky-500/20'}`}
       >
-        {isExtracting ? '⏳ Processando URLs...' : '🚀 Iniciar Extração'}
+        {isExtracting ? 'Processando URLs...' : 'Iniciar extração'}
       </button>
       {isExtracting && (
         <div className="absolute inset-0 z-20 flex flex-col rounded-3xl bg-slate-950 border border-sky-500/30 animate-in fade-in duration-300">
@@ -153,9 +157,9 @@ function ViewReview({
   setGalleryImovel: (imovel: ImovelItem | null) => void
 }) {
   return (
-    <div className="space-y-4 animate-in fade-in duration-500">
+    <div className="review-view space-y-4 animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">Revisão de Imóveis</h2>
+        <div><p className="eyebrow">Qualidade do anúncio</p><h2 className="text-2xl font-semibold">Revisão de imóveis</h2></div>
         <span className="rounded-full bg-slate-800 px-3 py-1 text-sm text-slate-300">{imoveis.length} itens</span>
       </div>
       {imoveis.length === 0 ? <p className="text-slate-400">Nenhum imóvel para revisar.</p> :
@@ -243,9 +247,9 @@ function ViewQueue({
   publishingIds: Set<number>
 }) {
   return (
-    <div className="space-y-4 animate-in fade-in duration-500">
+    <div className="queue-view space-y-4 animate-in fade-in duration-500">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">Fila de Publicação</h2>
+        <div><p className="eyebrow">Próximos passos</p><h2 className="text-2xl font-semibold">Fila de publicação</h2></div>
         <span className="rounded-full bg-slate-800 px-3 py-1 text-sm text-slate-300">{queue.length} itens</span>
       </div>
       {queue.length === 0 ? <p className="text-slate-400">Fila vazia.</p> :
@@ -309,7 +313,7 @@ function GalleryModal({
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
-        <h3 className="text-xl font-bold mb-6 pr-10">{galleryImovel.titulo}</h3>
+        <p className="eyebrow">Galeria do imóvel</p><h3 className="text-xl font-bold mb-6 pr-10">{galleryImovel.titulo}</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {galleryImovel.imagens_json && galleryImovel.imagens_json.length > 0 ? (
             galleryImovel.imagens_json.map((src, index) => (
@@ -348,10 +352,10 @@ function LoginScreen({ onLogin }: { onLogin: (username: string, password: string
     <div className="brand-shell min-h-screen text-slate-100 flex items-center justify-center p-6">
       <div className="brand-login w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl shadow-sky-500/10">
         <div className="flex items-center gap-3">
-          <img src="/WhatsApp%20Image%202026-09-02%20at%2010.58.47.jpeg" alt="onora marktplace" className="brand-mark h-14 w-14 rounded-2xl" />
+          <img src="/WhatsApp%20Image%202026-09-02%20at%2010.58.47.jpeg" alt="Onora Imob" className="brand-mark h-14 w-14 rounded-2xl" />
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-sky-400 font-bold">onora</p>
-            <p className="text-sm text-slate-400">marktplace</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-sky-400 font-bold">Onora</p>
+            <p className="text-sm text-slate-400">Imob</p>
           </div>
         </div>
         <h1 className="mt-8 text-3xl font-bold">Acesso ao painel</h1>
@@ -552,39 +556,39 @@ function App() {
 
   return (
     <div className="brand-shell min-h-screen text-slate-100 font-sans">
-      <div className="max-w-[1600px] mx-auto px-4 py-6">
-        <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="app-frame max-w-[1600px] mx-auto px-4 py-6">
+        <header className="brand-header mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex items-center gap-4">
-            <img src="/WhatsApp%20Image%202026-09-02%20at%2010.58.47.jpeg" alt="onora marktplace" className="brand-mark h-16 w-16 rounded-2xl shadow-lg shadow-blue-950/30" />
+            <img src="/WhatsApp%20Image%202026-09-02%20at%2010.58.47.jpeg" alt="Onora Imob" className="brand-mark h-16 w-16 rounded-2xl shadow-lg shadow-blue-950/30" />
             <div>
-            <p className="text-xs uppercase tracking-widest text-sky-400 font-bold mb-1">onora marktplace</p>
-            <h1 className="text-4xl font-bold tracking-tight">onora <span className="text-sky-400">marktplace</span></h1>
-            <p className="text-slate-400">Extração inteligente e automação de publicações.</p>
+            <p className="text-xs uppercase tracking-widest text-sky-400 font-bold mb-1">Onora Imob</p>
+            <h1 className="text-4xl font-bold tracking-tight">Onora <span className="text-sky-400">Imob</span></h1>
+            <p className="text-slate-400">Gestão inteligente de anúncios imobiliários.</p>
             </div>
           </div>
           <div className="flex flex-col gap-2 items-end">
-            <div className="rounded-full bg-slate-900 border border-slate-800 px-3 py-1 text-[10px] font-bold uppercase text-slate-400">
+            <div className="connection-pill rounded-full bg-slate-900 border border-slate-800 px-3 py-1 text-[10px] font-bold uppercase text-slate-400">
               {wsStatus}
             </div>
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 min-w-[250px]">
-              <p className="text-xs uppercase text-slate-500 font-semibold">Status do Sistema</p>
+            <div className="status-card rounded-2xl border border-slate-800 bg-slate-900 p-4 min-w-[250px]">
+              <p className="text-xs uppercase text-slate-500 font-semibold">Status do Onora Imob</p>
               <p className="mt-1 text-slate-100 font-medium">{statusMessage || 'Sistema Pronto'}</p>
             </div>
           </div>
         </header>
-        <div className="grid gap-6 xl:grid-cols-[240px_1fr]">
+        <div className="workspace-grid grid gap-6 xl:grid-cols-[240px_1fr]">
           <aside className="space-y-4">
-            <nav className="flex flex-col gap-2">
-              <button onClick={() => setActiveTab('dashboard')} className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
+            <nav className="nav-shell flex flex-col gap-2">
+              <button onClick={() => setActiveTab('dashboard')} className={`nav-item flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="9" x="14" y="3" rx="1"/><rect width="7" height="9" x="3" y="14" rx="1"/></svg> Dashboard
               </button>
-              <button onClick={() => setActiveTab('extract')} className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'extract' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
+              <button onClick={() => setActiveTab('extract')} className={`nav-item flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'extract' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path d="M15 12l-3-3-3 3 3 3"/></svg> Extrair
               </button>
-              <button onClick={() => setActiveTab('review')} className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'review' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
+              <button onClick={() => setActiveTab('review')} className={`nav-item flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'review' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Revisão
               </button>
-              <button onClick={() => setActiveTab('queue')} className={`flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'queue' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
+              <button onClick={() => setActiveTab('queue')} className={`nav-item flex items-center gap-3 px-4 py-3 rounded-2xl transition-all ${activeTab === 'queue' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-900 text-slate-400 hover:bg-slate-800'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M17 5H7M17 19H7"/></svg> Fila
               </button>
             </nav>

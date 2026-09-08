@@ -22,11 +22,11 @@ async def extrair_dados(page, url):
         logger.warning(f"Timeout carregando: {url}")
 
     try:
-        await page.wait_for_load_state("networkidle", timeout=25000)
+        await page.wait_for_load_state("networkidle", timeout=8000)
     except Exception:
         pass
 
-    await asyncio.sleep(2)
+    await asyncio.sleep(0.5)
     try:
         await utils.scroll_humano(page)
     except Exception:

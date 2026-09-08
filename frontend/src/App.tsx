@@ -472,11 +472,31 @@ function App() {
     try {
       setExtractTotalUrls(rawUrls.length)
       setIsExtracting(true)
-      setStatusMessage('🚀 Extraindo... acompanhe nos logs!')
-      const response = await api.post('/extract', { urls: rawUrls })
-      setImoveis(response.data)
+      const batchSize = 3
+      const extractedItems: ImovelItem[] = []
+
+      for (let start = 0; start < rawUrls.length; start += batchSize) {
+        const batch = rawUrls.slice(start, start + batchSize)
+        const batchNumber = Math.floor(start / batchSize) + 1
+        const totalBatches = Math.ceil(rawUrls.length / batchSize)
+        setStatusMessage(`🚀 Extraindo lote ${batchNumber}/${totalBatches}...`)
+
+        try {
+          const response = await api.post('/extract', { urls: batch })
+          extractedItems.push(...response.data)
+          setImoveis((current) => [...response.data, ...current])
+        } catch (error: any) {
+          console.error(`Falha no lote ${batchNumber}`, error)
+        }
+      }
+
+      if (extractedItems.length === 0) {
+        throw new Error('Nenhum imóvel foi extraído com sucesso')
+      }
+
       setUrls('')
       await refreshData()
+      setStatusMessage(`✅ ${extractedItems.length} imóvel(is) extraído(s) com sucesso.`)
     } catch (error: any) {
       setStatusMessage(error?.response?.data?.detail || 'Falha na extração')
     } finally {

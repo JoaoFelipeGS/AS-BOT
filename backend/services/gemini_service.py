@@ -148,13 +148,13 @@ ANÚNCIO FINAL:
     # =========================
     # MAIN
     # =========================
-    async def reformulate_description(self, text: str, timeout: int = 60):
+    async def reformulate_description(self, text: str, timeout: int = 30):
         if not text or len(text.strip()) < 10:
             return text
 
         prompt = self._build_prompt(text)
 
-        for attempt in range(2):
+        for attempt in range(1):
             result = await asyncio.to_thread(
                 self._post_request,
                 prompt,

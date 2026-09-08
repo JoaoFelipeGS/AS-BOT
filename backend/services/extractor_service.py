@@ -109,6 +109,7 @@ class ExtractorService:
         )
 
         browser = None
+        context = None
 
         try:
 
@@ -151,7 +152,7 @@ class ExtractorService:
                     await page.goto(
                         url,
                         wait_until="domcontentloaded",
-                        timeout=120000
+                        timeout=45000
                     )
 
                 except TimeoutError:
@@ -172,13 +173,7 @@ class ExtractorService:
                         "A imobiliária precisa autorizar o acesso do bot ou fornecer uma rota de acesso autorizada."
                     )
 
-                await legacy_utils.delay_async()
                 await stealth(page)
-
-                try:
-                    await legacy_utils.scroll_humano(page)
-                except:
-                    pass
 
                 # 1. EXTRAÇÃO BASE (A única fonte de dados reais)
                 data = await legacy_extractor.extrair_dados(
@@ -223,7 +218,8 @@ class ExtractorService:
                         logger.info(f"Reformulando descrição para: {url}")
                         # Chamamos apenas a função de copywriting
                         reformulated = await gemini_service.reformulate_description(
-                            data["descricao"]
+                            data["descricao"],
+                            timeout=30,
                         )
                         if reformulated and reformulated != data["descricao"]:
                             data["descricao"] = reformulated
@@ -252,10 +248,6 @@ class ExtractorService:
                     f"Imóvel salvo: {imovel.id}"
                 )
 
-                await context.close()
-
-                await browser.close()
-
                 return imovel
 
         except Exception as e:
@@ -268,15 +260,19 @@ class ExtractorService:
                 traceback.format_exc()
             )
 
-            try:
+            return None
 
+        finally:
+            try:
+                if context:
+                    await context.close()
+            except Exception:
+                pass
+            try:
                 if browser:
                     await browser.close()
-
-            except:
+            except Exception:
                 pass
-
-            return None
 
 
 extractor_service = ExtractorService()

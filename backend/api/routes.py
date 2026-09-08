@@ -91,14 +91,28 @@ def dashboard_overview(db: Session = Depends(get_db), _user: str = Depends(requi
 
 @router.post("/extract", response_model=List[ImovelResponse])
 async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db), _user: str = Depends(require_auth)):
-    results = []
-    for url in payload.urls:
-        try:
-            imovel = await ExtractorService.extract_and_save(str(url), db)
-            if imovel:
-                results.append(_prepare_imovel(imovel))
-        except Exception as e:
-            logger.exception(f"Erro ao extrair URL {url}: {str(e)}")
+    del db
+    semaphore = asyncio.Semaphore(2)
+
+    async def extract_one(url):
+        async with semaphore:
+            local_db = SessionLocal()
+            try:
+                imovel = await asyncio.wait_for(
+                    ExtractorService.extract_and_save(str(url), local_db),
+                    timeout=150,
+                )
+                return _prepare_imovel(imovel) if imovel else None
+            except asyncio.TimeoutError:
+                logger.error(f"Tempo limite excedido na extração: {url}")
+            except Exception as e:
+                logger.exception(f"Erro ao extrair URL {url}: {e}")
+            finally:
+                local_db.close()
+            return None
+
+    extracted = await asyncio.gather(*(extract_one(url) for url in payload.urls))
+    results = [item for item in extracted if item is not None]
     if not results:
         raise HTTPException(status_code=422, detail="Nenhum imóvel extraído com sucesso")
     return results

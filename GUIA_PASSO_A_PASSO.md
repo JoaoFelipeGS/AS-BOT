@@ -37,7 +37,7 @@ Resultado: Você tem um banco PostgreSQL gratuito!
 4. Guarde em um bloco de notas
 
 Exemplo:
-postgresql://neondb_owner:Abc123xyz@ep-small-123.us-east-1.neon.tech/neondb
+postgresql://USUARIO:SENHA@SEU_HOST_NEON/neondb
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ PASSO 3: Configurar Bot                                                     │
@@ -51,7 +51,7 @@ postgresql://neondb_owner:Abc123xyz@ep-small-123.us-east-1.neon.tech/neondb
 
 4. Cole no arquivo:
 
-   DATABASE_URL=postgresql://neondb_owner:Abc123xyz@ep-small-123.us-east-1.neon.tech/neondb
+   DATABASE_URL=postgresql://USUARIO:SENHA@SEU_HOST_NEON/neondb
 
 5. Salve (Ctrl + S)
 

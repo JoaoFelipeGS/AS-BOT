@@ -62,8 +62,8 @@ class Settings(BaseSettings):
     gemini_api_url: str = ""
 
     # --- Credenciais/segurança do dashboard ---
-    admin_username: str = "admin"
-    admin_password: str = "admin123"
+    admin_username: str = ""
+    admin_password: str = ""
 
     # --- Pastas (Compatibilidade total) ---
     dir_logs: str = "logs"

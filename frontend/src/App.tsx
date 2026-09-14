@@ -472,7 +472,7 @@ function App() {
     try {
       setExtractTotalUrls(rawUrls.length)
       setIsExtracting(true)
-      const batchSize = 3
+      const batchSize = 6
       const extractedItems: ImovelItem[] = []
 
       for (let start = 0; start < rawUrls.length; start += batchSize) {

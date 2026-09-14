@@ -5,6 +5,7 @@ import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urlparse
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -94,6 +95,17 @@ def dashboard_overview(db: Session = Depends(get_db), _user: str = Depends(requi
 async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     del db
     semaphore = asyncio.Semaphore(2)
+    urls = []
+    for raw_url in payload.urls:
+        url = str(raw_url).strip()
+        parsed = urlparse(url)
+        if parsed.scheme in ("http", "https") and parsed.netloc and url not in urls:
+            urls.append(url)
+
+    if not urls:
+        raise HTTPException(status_code=422, detail="Nenhuma URL válida foi enviada")
+
+    logger.info(f"Iniciando lote de extração: {len(urls)} URL(s), concorrência 2")
 
     async def extract_one(url):
         async with semaphore:
@@ -112,7 +124,7 @@ async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db
                 local_db.close()
             return None
 
-    extracted = await asyncio.gather(*(extract_one(url) for url in payload.urls))
+    extracted = await asyncio.gather(*(extract_one(url) for url in urls), return_exceptions=False)
     results = [item for item in extracted if item is not None]
     if not results:
         raise HTTPException(status_code=422, detail="Nenhum imóvel extraído com sucesso")

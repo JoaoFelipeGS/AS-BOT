@@ -134,7 +134,9 @@ class DashboardStats(BaseModel):
 # =========================================================
 
 class ExtractPayload(BaseModel):
-    urls: List[AnyUrl]
+    # A validação individual acontece na rota para que uma URL inválida não
+    # descarte todo o lote enviado pelo usuário.
+    urls: List[str]
 
     model_config = {
         "from_attributes": True

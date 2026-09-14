@@ -137,6 +137,8 @@ class ExtractorService:
                 )
 
                 page = await context.new_page()
+                page.set_default_timeout(10000)
+                page.set_default_navigation_timeout(35000)
 
                 await stealth(page)
 

@@ -34,7 +34,11 @@ async def extrair_dados(page, url):
     except Exception:
         pass
 
-    html = await page.content()
+    try:
+        html = await page.content()
+    except Exception as error:
+        logger.warning(f"Página encerrada antes da leitura: {url} ({error.__class__.__name__})")
+        return None
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
     structured = _extrair_dados_estruturados(soup, url)

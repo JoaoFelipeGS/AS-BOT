@@ -94,7 +94,9 @@ def dashboard_overview(db: Session = Depends(get_db), _user: str = Depends(requi
 @router.post("/extract", response_model=List[ImovelResponse])
 async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     del db
-    semaphore = asyncio.Semaphore(2)
+    # Um Chromium por vez evita que o plano gratuito do Render encerre os
+    # contextos por falta de memória durante lotes maiores.
+    semaphore = asyncio.Semaphore(1)
     urls = []
     for raw_url in payload.urls:
         url = str(raw_url).strip()
@@ -111,10 +113,7 @@ async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db
         async with semaphore:
             local_db = SessionLocal()
             try:
-                imovel = await asyncio.wait_for(
-                    ExtractorService.extract_and_save(str(url), local_db),
-                    timeout=90,
-                )
+                imovel = await ExtractorService.extract_and_save(str(url), local_db)
                 return _prepare_imovel(imovel) if imovel else None
             except asyncio.TimeoutError:
                 logger.error(f"Tempo limite excedido na extração: {url}")

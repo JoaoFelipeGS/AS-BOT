@@ -113,7 +113,7 @@ async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db
             try:
                 imovel = await asyncio.wait_for(
                     ExtractorService.extract_and_save(str(url), local_db),
-                    timeout=150,
+                    timeout=90,
                 )
                 return _prepare_imovel(imovel) if imovel else None
             except asyncio.TimeoutError:

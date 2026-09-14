@@ -472,14 +472,14 @@ function App() {
     try {
       setExtractTotalUrls(rawUrls.length)
       setIsExtracting(true)
-      const batchSize = 6
+      const batchSize = 4
       const extractedItems: ImovelItem[] = []
 
       for (let start = 0; start < rawUrls.length; start += batchSize) {
         const batch = rawUrls.slice(start, start + batchSize)
         const batchNumber = Math.floor(start / batchSize) + 1
         const totalBatches = Math.ceil(rawUrls.length / batchSize)
-        setStatusMessage(`🚀 Extraindo lote ${batchNumber}/${totalBatches}...`)
+        setStatusMessage(`Extraindo ${start + 1}-${Math.min(start + batch.length, rawUrls.length)} de ${rawUrls.length}...`)
 
         try {
           const response = await api.post('/extract', { urls: batch })
@@ -496,7 +496,7 @@ function App() {
 
       setUrls('')
       await refreshData()
-      setStatusMessage(`✅ ${extractedItems.length} imóvel(is) extraído(s) com sucesso.`)
+      setStatusMessage(`${extractedItems.length} de ${rawUrls.length} imóvel(is) extraído(s) com sucesso.`)
     } catch (error: any) {
       setStatusMessage(error?.response?.data?.detail || 'Falha na extração')
     } finally {

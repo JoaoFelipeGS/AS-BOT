@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from typing import List
 
 from ..schemas import (
@@ -124,7 +125,7 @@ async def extract_listings(payload: ExtractPayload, db: Session = Depends(get_db
 def list_imoveis(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     try:
         # Subquery para pegar todos os IDs de imóveis que já estão na fila
-        imoveis_na_fila = db.query(Fila.imovel_id).subquery()
+        imoveis_na_fila = select(Fila.imovel_id)
         
         # Filtra a tabela Imovel: pega apenas quem NÃO está na subquery da fila
         imoveis = db.query(Imovel).filter(

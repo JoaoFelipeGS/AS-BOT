@@ -17,18 +17,20 @@ async def extrair_dados(page, url):
     logger.info(f"Iniciando extração multi-site: {url}")
     try:
         if page.url != url:
-            await page.goto(url, timeout=settings.timeout_carregamento, wait_until="domcontentloaded")
+            await page.goto(url, timeout=35000, wait_until="domcontentloaded")
     except TimeoutError:
-        logger.warning(f"Timeout carregando: {url}")
+        logger.warning(f"Timeout carregando: {url}; usando o HTML disponível")
 
     try:
-        await page.wait_for_load_state("networkidle", timeout=8000)
+        await page.wait_for_load_state("networkidle", timeout=3000)
     except Exception:
         pass
 
     await asyncio.sleep(0.5)
     try:
-        await utils.scroll_humano(page)
+        for _ in range(3):
+            await page.mouse.wheel(0, 700)
+            await asyncio.sleep(0.35)
     except Exception:
         pass
 

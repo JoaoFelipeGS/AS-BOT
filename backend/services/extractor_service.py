@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from playwright.async_api import TimeoutError, async_playwright
+from playwright.async_api import async_playwright
 
 # --- IMPORTS CORRIGIDOS PARA MODO ABSOLUTO ---
 from backend.services import extractor as legacy_extractor
@@ -113,15 +113,6 @@ class ExtractorService:
 
         try:
 
-            profile_path = Path(
-                settings.persistent_profile
-            )
-
-            profile_path.mkdir(
-                parents=True,
-                exist_ok=True
-            )
-
             async with async_playwright() as p:
 
                 browser = await p.chromium.launch(
@@ -146,32 +137,6 @@ class ExtractorService:
                 )
 
                 page = await context.new_page()
-
-                try:
-
-                    await page.goto(
-                        url,
-                        wait_until="domcontentloaded",
-                        timeout=45000
-                    )
-
-                except TimeoutError:
-
-                    logger.warning(
-                        f"Timeout inicial: {url}"
-                    )
-
-                except Exception as e:
-
-                    logger.warning(
-                        f"Erro navegação: {e}"
-                    )
-
-                if await _is_antibot_checkpoint(page):
-                    raise RuntimeError(
-                        "O site bloqueou a automação com um checkpoint anti-bot. "
-                        "A imobiliária precisa autorizar o acesso do bot ou fornecer uma rota de acesso autorizada."
-                    )
 
                 await stealth(page)
 
@@ -219,7 +184,7 @@ class ExtractorService:
                         # Chamamos apenas a função de copywriting
                         reformulated = await gemini_service.reformulate_description(
                             data["descricao"],
-                            timeout=30,
+                            timeout=10,
                         )
                         if reformulated and reformulated != data["descricao"]:
                             data["descricao"] = reformulated

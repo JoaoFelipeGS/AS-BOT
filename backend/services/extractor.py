@@ -42,16 +42,20 @@ async def extrair_dados(page, url):
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
     structured = _extrair_dados_estruturados(soup, url)
-    listing_text = structured.get("text") or text
+    # JSON-LD pode conter apenas parte do anúncio; mantenha o texto visível
+    # disponível para completar campos ausentes nesse bloco estruturado.
+    listing_text = " ".join(filter(None, (structured.get("text"), text)))
 
     titulo = structured.get("titulo") or _extrair_titulo(soup, listing_text)
     descricao = structured.get("descricao") or _extrair_descricao(soup, listing_text)
     preco = structured.get("preco") or _extrair_preco(listing_text)
-    quartos, banheiros, garagem = _extrair_comodos(listing_text)
-    quartos = structured.get("quartos", quartos)
-    banheiros = structured.get("banheiros", banheiros)
-    garagem = structured.get("garagem", garagem)
-    area = structured.get("area") or _extrair_area(listing_text)
+    room_text = " ".join(filter(None, (titulo, descricao, url, structured.get("text"))))
+    quartos, banheiros, garagem = _extrair_comodos(room_text)
+    visible_rooms = _extrair_comodos(text)
+    quartos = _valid_count(quartos) or visible_rooms[0] or _valid_count(structured.get("quartos"))
+    banheiros = _valid_count(banheiros) or visible_rooms[1] or _valid_count(structured.get("banheiros"))
+    garagem = _valid_count(garagem) or visible_rooms[2] or _valid_count(structured.get("garagem"))
+    area = _extrair_area(room_text) or structured.get("area") or _extrair_area(text)
     endereco = structured.get("endereco") or _extrair_endereco(soup, listing_text)
     fotos = await _extrair_fotos(
         page,
@@ -72,6 +76,10 @@ async def extrair_dados(page, url):
         "url": url,
         "fotos": fotos,
     }
+    for campo in ("titulo", "descricao", "quartos", "banheiros", "garagem", "area", "fotos"):
+        valor = dados.get(campo)
+        if valor in (None, "", 0, []):
+            logger.warning(f"Campo '{campo}' não encontrado ou vazio em {url}")
     logger.info(f"EXTRAÇÃO FINALIZADA: Preço {preco}, Quartos {quartos}, Fotos {len(fotos)}")
     return dados
 
@@ -117,6 +125,26 @@ def _property_values(entity):
         if isinstance(prop, dict) and prop.get("name"):
             values[str(prop["name"]).lower()] = prop.get("value")
     return values
+
+
+def _valid_count(value, maximum=20):
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return number if 0 < number <= maximum else 0
+
+
+def _property_value(properties, *names):
+    normalized = {
+        re.sub(r"[^a-z0-9]", "", key.lower()): value
+        for key, value in properties.items()
+    }
+    for name in names:
+        value = normalized.get(re.sub(r"[^a-z0-9]", "", name.lower()))
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def _extrair_dados_estruturados(soup, url):
@@ -180,19 +208,19 @@ def _extrair_dados_estruturados(soup, url):
         images = [images]
     images = [urljoin(url, image) for image in images if isinstance(image, str)]
     entity_text = html_lib.unescape(" ".join(str(value) for value in (entity.get("name"), entity.get("description")) if value))
-    bedrooms = int(_as_number(entity.get("numberOfBedrooms") or properties.get("quartos") or properties.get("dormitórios"))) or _extrair_comodos(entity_text)[0]
-    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms") or properties.get("banheiros"))) or _extrair_comodos(entity_text)[1]
+    bedrooms = int(_as_number(entity.get("numberOfBedrooms") or entity.get("numberOfRooms") or _property_value(properties, "quartos", "dormitorios", "bedrooms", "rooms"))) or _extrair_comodos(entity_text)[0]
+    bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms") or _property_value(properties, "banheiros", "bathrooms"))) or _extrair_comodos(entity_text)[1]
     parking = 0
     features = entity.get("amenityFeature") or []
     if isinstance(features, dict):
         features = [features]
     for feature in features:
         if isinstance(feature, dict) and any(word in str(feature.get("name", "")).lower() for word in ("garagem", "vaga", "parking")):
-            parking = int(_as_number(feature.get("value")))
+            parking = int(_as_number(feature.get("value"))) or int(_as_number(feature.get("description")))
     if not parking:
-        parking = int(_as_number(properties.get("garagem") or properties.get("vagas"))) or _extrair_comodos(entity_text)[2]
+        parking = int(_as_number(_property_value(properties, "garagem", "vagas", "parking", "carports"))) or _extrair_comodos(entity_text)[2]
 
-    area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea") or properties.get("área total") or properties.get("área útil") or properties.get("area") or _extrair_area(entity_text)
+    area = entity.get("floorSize") or entity.get("area") or entity.get("floorArea") or _property_value(properties, "area total", "area util", "area", "floor size") or _extrair_area(entity_text)
     if isinstance(area, dict):
         area = area.get("value")
 
@@ -261,23 +289,46 @@ def _extrair_preco(text: str):
 def _extrair_comodos(text: str) -> Tuple[int, int, int]:
     quartos = banheiros = garagem = 0
 
-    q = re.search(r"(\d+)\s*(?:quartos?|dormit[óo]rios?|bedrooms?|bedroom)", text, re.I)
-    if q:
-        quartos = int(q.group(1))
+    numbers = {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5, "seis": 6}
 
-    b = re.search(r"(\d+)\s*(?:banheiros?|bathrooms?|bathroom)", text, re.I)
-    if b:
-        banheiros = int(b.group(1))
+    def extract_count(labels, choose_largest=False, prefer_value_before=False):
+        label_pattern = "(?:" + "|".join(labels) + ")"
+        value_pattern = r"(\d+|" + "|".join(numbers) + r")"
+        if prefer_value_before:
+            matches = list(re.finditer(rf"{value_pattern}\s*{label_pattern}", text, re.I))
+            if matches:
+                values = [match.group(1).lower() for match in matches]
+                parsed = [int(value) if value.isdigit() else numbers[value] for value in values]
+                return max(parsed, default=0) if choose_largest else parsed[0]
+        matches = list(re.finditer(rf"{label_pattern}\s*[:\-]?\s*{value_pattern}", text, re.I))
+        matches = [
+            match for match in matches
+            if not re.match(r"\s*(?:m²|m2|metros quadrados|área|area)", text[match.end():], re.I)
+        ]
+        if matches:
+            values = [match.group(1).lower() for match in matches]
+        else:
+            matches = list(re.finditer(rf"{value_pattern}\s*{label_pattern}", text, re.I))
+            values = [match.group(1).lower() for match in matches]
+        if not matches:
+            matches = list(re.finditer(rf"{label_pattern}\s+{value_pattern}", text, re.I))
+            values = [match.group(1).lower() for match in matches]
+        parsed = [int(value) if value.isdigit() else numbers[value] for value in values]
+        return max(parsed, default=0) if choose_largest else (parsed[0] if parsed else 0)
 
-    g = re.search(r"(\d+)\s*(?:vagas?|garagens?|parking|carports?)", text, re.I)
-    if g:
-        garagem = int(g.group(1))
+    quartos = extract_count((r"quartos?", r"dormit[óo]rios?", r"dorms?", r"bedrooms?"))
+    if not quartos:
+        quartos = extract_count((r"suítes?", r"suites?"), choose_largest=True)
+    banheiros = extract_count((r"banheiros?", r"bathrooms?"))
+    garagem = extract_count((r"vagas?", r"garagens?", r"parking", r"carports?"), prefer_value_before=True)
 
     return quartos, banheiros, garagem
 
 
 def _extrair_area(text: str) -> int:
-    match = re.search(r"(\d{2,}(?:[.,]\d+)?)\s*(?:m²|m2|metros quadrados|m\s*quadrados|área)", text, re.I)
+    match = re.search(r"(\d{2,}(?:[.,]\d+)?)\s*(?:m²|m2|metros quadrados|m\s*quadrados)", text, re.I)
+    if not match:
+        match = re.search(r"(?:área total|área útil|area total|area util)\s*[:\-]?\s*(\d{2,}(?:[.,]\d+)?)", text, re.I)
     if match:
         return int(_as_number(match.group(1)))
     return 0
@@ -312,28 +363,31 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
             if image_url:
                 imagens.append(urljoin(url_imovel, image_url))
 
-        for script in soup.find_all("script"):
-            for image_url in re.findall(r"https?://[^\"'\\s]+?\.(?:jpe?g|png|webp)(?:\?[^\"'\\s]+)?", script.get_text(), re.I):
-                imagens.append(image_url)
+        # Limite a coleta ao contêiner mais provável da galeria do anúncio.
+        gallery_roots = _localizar_galerias(soup)
+        for root in gallery_roots:
+            for tag in root.find_all(["img", "source"]):
+                for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
+                    value = tag.get(attr)
+                    if not value:
+                        continue
+                    urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
+                    for image_url in urls:
+                        if image_url.startswith("http") and not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                            imagens.append(image_url)
 
-        # JSON-LD costuma trazer apenas a capa; complemente com a galeria HTML.
-        for tag in soup.find_all(["img", "source"]):
-            for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
-                value = tag.get(attr)
-                if not value:
-                    continue
-                urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
-                for image_url in urls:
-                    if image_url.startswith("http") and not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                        imagens.append(image_url)
+        # Só usa heurísticas genéricas quando nenhum contêiner nomeado foi encontrado.
+        if not gallery_roots:
+            imagens.extend(await _extrair_fotos_fallback(page, soup, url_imovel))
 
         for _ in range(12):
             try:
-                cards = await page.query_selector_all("img")
-                for card in cards:
-                    src = await card.get_attribute("src") or await card.get_attribute("data-src")
-                    if src and src.startswith("http") and not any(k in src.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                        imagens.append(src)
+                for selector in _seletores_galeria():
+                    cards = await page.query_selector_all(f"{selector} img, {selector} source")
+                    for card in cards:
+                        src = await card.get_attribute("src") or await card.get_attribute("data-src")
+                        if src and src.startswith("http") and not any(k in src.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                            imagens.append(src)
                 await page.mouse.wheel(0, 500)
                 await asyncio.sleep(0.6)
             except Exception:
@@ -360,8 +414,125 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
 
         # O Render gratuito não possui disco persistente. Mantemos as URLs no
         # Neon e baixamos os arquivos somente durante a publicação.
-        return imagens[:12]
+        resultado = imagens[:12]
+        if not gallery_roots and len(resultado) < 2:
+            logger.warning(f"Fallback de galeria não encontrou fotos suficientes em {url_imovel}")
+        return resultado
 
     except Exception as e:
         logger.warning(f"Erro fotos multi-site: {e}")
         return []
+
+
+def _localizar_galerias(soup):
+    """Retorna apenas raízes de galeria, evitando recomendações e imagens de layout."""
+    gallery_terms = ("gallery", "galeria", "carousel", "carrossel", "swiper", "lightbox", "fotos", "photos", "property-images", "listing-media")
+    excluded_terms = ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest")
+    candidates = []
+    for tag in soup.find_all(["div", "section", "article", "ul"]):
+        attrs = " ".join(str(tag.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
+        if any(term in attrs for term in excluded_terms):
+            continue
+        images = tag.find_all(["img", "source"])
+        named_score = sum(term in attrs for term in gallery_terms)
+        score = named_score * 20 + min(len(images), 12)
+        if named_score and images:
+            candidates.append((score, len(images), tag))
+
+    if candidates:
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected = []
+        for _, _, tag in candidates:
+            if any(tag is parent or tag in parent.parents for parent in selected):
+                continue
+            selected.append(tag)
+            if len(selected) == 3:
+                break
+        return selected
+    return []
+
+
+def _tag_em_secao_excluida(tag):
+    excluded_terms = ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest", "partner", "parceir")
+    current = tag
+    while current and getattr(current, "name", None) != "html":
+        attrs = " ".join(str(current.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
+        if current.name in ("header", "footer", "nav", "aside") or any(term in attrs for term in excluded_terms):
+            return True
+        current = current.parent
+    return False
+
+
+def _urls_de_atributos_de_galeria(soup, url_imovel):
+    urls = []
+    attrs = ("data-src", "data-lazy-src", "data-fancybox", "data-lightbox", "data-gallery")
+    for tag in soup.find_all(["img", "source", "a"]):
+        if _tag_em_secao_excluida(tag):
+            continue
+        values = [tag.get(attr) for attr in attrs if tag.get(attr)]
+        if tag.get("href") and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery")):
+            values.append(tag.get("href"))
+        srcset = tag.get("srcset")
+        if srcset and "," in srcset:
+            values.extend(part.strip().split(" ")[0] for part in srcset.split(","))
+        for value in values:
+            if isinstance(value, str) and value.startswith(("http://", "https://", "/")):
+                urls.append(urljoin(url_imovel, value))
+    return list(dict.fromkeys(urls))
+
+
+async def _extrair_fotos_fallback(page, soup, url_imovel):
+    """Detecta galeria sem depender de classes semânticas do site."""
+    attribute_urls = _urls_de_atributos_de_galeria(soup, url_imovel)
+    if len(attribute_urls) >= 2:
+        return attribute_urls
+
+    try:
+        visual_images = await page.locator("img").evaluate_all(
+            """
+            (images) => images.map((image) => {
+                const rect = image.getBoundingClientRect();
+                const excluded = /related|similar|semelhante|recomend|corretor|agent|suggest|partner|parceir/i;
+                const excludedParent = [...image.closestAll ? image.closestAll('*') : []];
+                let node = image;
+                let inExcludedSection = false;
+                while (node && node.tagName !== 'HTML') {
+                    const marker = `${node.tagName} ${node.id || ''} ${node.className || ''} ${node.getAttribute('data-testid') || ''} ${node.getAttribute('aria-label') || ''}`;
+                    if (/^(HEADER|FOOTER|NAV|ASIDE)$/.test(node.tagName) || excluded.test(marker)) {
+                        inExcludedSection = true;
+                        break;
+                    }
+                    node = node.parentElement;
+                }
+                const width = Number(image.getAttribute('width')) || image.naturalWidth || rect.width;
+                const height = Number(image.getAttribute('height')) || image.naturalHeight || rect.height;
+                return {
+                    url: image.currentSrc || image.src || image.dataset.src || image.dataset.lazySrc,
+                    width, height, inExcludedSection
+                };
+            })
+            """
+        )
+    except Exception:
+        visual_images = []
+
+    valid_images = [
+        image for image in visual_images
+        if image.get("url") and image.get("width", 0) >= 150 and image.get("height", 0) >= 150 and not image.get("inExcludedSection")
+    ]
+    groups = {}
+    for image in valid_images:
+        ratio = round(image["width"] / image["height"], 1)
+        size = (round(image["width"] / 100), round(image["height"] / 100))
+        groups.setdefault((ratio, size), []).append(image)
+    largest_group = max(groups.values(), key=len, default=[])
+    visual_urls = [urljoin(url_imovel, image["url"]) for image in largest_group]
+    return list(dict.fromkeys(attribute_urls + visual_urls))
+
+
+def _seletores_galeria():
+    return (
+        "[class*='gallery']", "[class*='galeria']", "[class*='carousel']",
+        "[class*='carrossel']", "[class*='swiper']", "[class*='lightbox']",
+        "[data-testid*='gallery']", "[data-testid*='photo']",
+    )

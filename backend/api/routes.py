@@ -157,7 +157,10 @@ def delete_imovel(imovel_id: int, db: Session = Depends(get_db), _user: str = De
         db.delete(imovel)
         db.commit()
         return {"ok": True, "message": "Imóvel excluído com sucesso"}
+    except HTTPException:
+        raise
     except Exception as e:
+        db.rollback()
         logger.exception(f"Erro ao excluir imóvel: {str(e)}")
         raise HTTPException(status_code=500, detail="Erro ao excluir imóvel")
 

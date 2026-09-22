@@ -511,7 +511,14 @@ function App() {
       await api.delete(`/imoveis/${id}`)
       setStatusMessage('Imóvel removido com sucesso.')
       refreshData()
-    } catch (e) { setStatusMessage('Erro ao excluir.') }
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        await refreshData()
+        setStatusMessage('Este imóvel já não existe ou já foi removido.')
+      } else {
+        setStatusMessage('Erro ao excluir.')
+      }
+    }
   }
 
   async function handleSave(imovel: ImovelItem) {

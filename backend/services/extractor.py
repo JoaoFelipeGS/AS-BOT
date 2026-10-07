@@ -41,21 +41,23 @@ async def extrair_dados(page, url):
         return None
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
+    principal_text = _extrair_texto_principal(soup)
     structured = _extrair_dados_estruturados(soup, url)
     # JSON-LD pode conter apenas parte do anúncio; mantenha o texto visível
     # disponível para completar campos ausentes nesse bloco estruturado.
-    listing_text = " ".join(filter(None, (structured.get("text"), text)))
+    listing_text = " ".join(filter(None, (structured.get("text"), principal_text, text)))
 
     titulo = structured.get("titulo") or _extrair_titulo(soup, listing_text)
-    descricao = structured.get("descricao") or _extrair_descricao(soup, listing_text)
-    preco = structured.get("preco") or _extrair_preco(listing_text)
+    descricao = _extrair_descricao(soup, principal_text, structured.get("descricao"))
+    price_text = " ".join(filter(None, (titulo, structured.get("descricao"), descricao, principal_text)))
+    preco = _extrair_preco(price_text, url) or structured.get("preco") or _extrair_preco(listing_text, url)
     room_text = " ".join(filter(None, (titulo, descricao, url, structured.get("text"))))
     quartos, banheiros, garagem = _extrair_comodos(room_text)
-    visible_rooms = _extrair_comodos(text)
+    visible_rooms = _extrair_comodos(principal_text)
     quartos = _valid_count(quartos) or visible_rooms[0] or _valid_count(structured.get("quartos"))
     banheiros = _valid_count(banheiros) or visible_rooms[1] or _valid_count(structured.get("banheiros"))
     garagem = _valid_count(garagem) or visible_rooms[2] or _valid_count(structured.get("garagem"))
-    area = _extrair_area(room_text) or structured.get("area") or _extrair_area(text)
+    area = _extrair_area(room_text) or structured.get("area") or _extrair_area(principal_text)
     endereco = structured.get("endereco") or _extrair_endereco(soup, listing_text)
     fotos = await _extrair_fotos(
         page,
@@ -185,7 +187,15 @@ def _extrair_dados_estruturados(soup, url):
         )
         if entity.get("name") and has_price and entity.get("image"):
             products.append(entity)
-    candidates.extend(products)
+    if candidates:
+        unlinked_products = [
+            entity for entity in products
+            if not (entity.get("url") or entity.get("@id"))
+        ]
+        if len(unlinked_products) == 1:
+            candidates.extend(unlinked_products)
+    elif len(products) == 1:
+        candidates.extend(products)
     if not candidates:
         return {}
 
@@ -204,11 +214,15 @@ def _extrair_dados_estruturados(soup, url):
         address_text = ", ".join(str(address.get(key)) for key in ("streetAddress", "addressLocality", "addressRegion") if address.get(key))
 
     images = entity.get("image") or []
-    if isinstance(images, str):
+    if isinstance(images, (str, dict)):
         images = [images]
-    images = [urljoin(url, image) for image in images if isinstance(image, str)]
+    images = [
+        urljoin(url, image if isinstance(image, str) else image.get("url") or image.get("contentUrl"))
+        for image in images
+        if isinstance(image, str) or (isinstance(image, dict) and (image.get("url") or image.get("contentUrl")))
+    ]
     entity_text = html_lib.unescape(" ".join(str(value) for value in (entity.get("name"), entity.get("description")) if value))
-    bedrooms = int(_as_number(entity.get("numberOfBedrooms") or entity.get("numberOfRooms") or _property_value(properties, "quartos", "dormitorios", "bedrooms", "rooms"))) or _extrair_comodos(entity_text)[0]
+    bedrooms = int(_as_number(entity.get("numberOfBedrooms") or _property_value(properties, "quartos", "dormitorios", "bedrooms"))) or _extrair_comodos(entity_text)[0]
     bathrooms = int(_as_number(entity.get("numberOfBathroomsTotal") or entity.get("numberOfBathrooms") or _property_value(properties, "banheiros", "bathrooms"))) or _extrair_comodos(entity_text)[1]
     parking = 0
     features = entity.get("amenityFeature") or []
@@ -227,7 +241,7 @@ def _extrair_dados_estruturados(soup, url):
     return {
         "titulo": entity.get("name") or entity.get("description") or "",
         "descricao": entity.get("description") or "",
-        "preco": _as_number(offers.get("price") or entity.get("price")),
+        "preco": _normalizar_preco(offers.get("price") or entity.get("price")),
         "quartos": bedrooms,
         "banheiros": bathrooms,
         "garagem": parking,
@@ -252,54 +266,167 @@ def _extrair_titulo(soup, text: str) -> str:
     return text[:300]
 
 
-def _extrair_descricao(soup, text: str) -> str:
-    meta_desc = soup.select_one("meta[name='description']")
-    if meta_desc and meta_desc.get("content"):
-        return re.sub(r"\s+", " ", meta_desc.get("content")).strip()[:5000]
+def _tag_excluida(tag):
+    excluded_terms = ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest", "partner", "parceir", "footer", "header", "sidebar")
+    current = tag
+    while current and getattr(current, "name", None) != "html":
+        attrs = " ".join(str(current.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
+        if current.name in ("header", "footer", "nav", "aside") or any(term in attrs for term in excluded_terms):
+            return True
+        current = current.parent
+    return False
 
-    candidates = soup.select("p, li, article, div")
-    for el in candidates:
+
+def _extrair_texto_principal(soup):
+    roots = soup.select("main, [role='main'], article") or [soup.body or soup]
+    candidates = []
+    for root in roots:
+        clone = BeautifulSoup(str(root), "lxml")
+        for tag in clone.find_all(["header", "footer", "nav", "aside", "script", "style"]):
+            tag.decompose()
+        for tag in list(clone.find_all(True)):
+            if tag.attrs is None:
+                continue
+            attrs = " ".join(str(tag.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
+            if any(term in attrs for term in ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest", "partner", "parceir")):
+                tag.decompose()
+        value = re.sub(r"\s+", " ", clone.get_text(" ", strip=True)).strip()
+        if value:
+            candidates.append(value)
+    return max(candidates, key=len, default="")
+
+
+def _extrair_descricao(soup, principal_text: str, structured_description: str = "") -> str:
+    selectors = (
+        "[itemprop='description']", "[class*='description']", "[class*='descricao']",
+        "[id*='description']", "[id*='descricao']",
+    )
+    candidates = []
+    for selector in selectors:
+        for tag in soup.select(selector):
+            if _tag_excluida(tag):
+                continue
+            value = tag.get("content") or tag.get_text(" ", strip=True)
+            value = re.sub(r"\s+", " ", value).strip()
+            if len(value) >= 80:
+                candidates.append(value)
+
+    if candidates:
+        return max(candidates, key=len)[:12000]
+
+    if structured_description and len(structured_description.strip()) >= 80:
+        return re.sub(r"\s+", " ", structured_description).strip()[:12000]
+
+    fallback_candidates = []
+    for el in soup.select("p, li, article, div"):
+        if _tag_excluida(el):
+            continue
         txt = re.sub(r"\s+", " ", el.get_text(" ", strip=True))
         if len(txt) < 80:
             continue
         lowered = txt.lower()
         if any(k in lowered for k in ["quartos", "banheiros", "m²", "dormitórios", "área", "garagem", "imóvel"]):
-            return txt[:5000]
+            fallback_candidates.append(txt)
 
-    return text[:5000]
+    if fallback_candidates:
+        return max(fallback_candidates, key=len)[:12000]
+
+    meta_desc = soup.select_one("meta[name='description']")
+    if meta_desc and meta_desc.get("content"):
+        return re.sub(r"\s+", " ", meta_desc.get("content")).strip()[:12000]
+    return principal_text[:12000]
 
 
-def _extrair_preco(text: str):
-    patterns = [
-        r"R\$\s*([\d\.\s]+,\d{2})",
-        r"(?:valor|preço|price)[^\d]{0,20}R\$\s*([\d\.\s]+,\d{2})",
-        r"([\d\.\s]+)\s*mil",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.I)
-        if match:
-            val = match.group(1).replace(".", "").replace(" ", "").replace(",", ".")
-            try:
-                return float(val)
-            except ValueError:
-                pass
-    return 0
+def _extrair_preco(text: str, url: str = ""):
+    matches = list(re.finditer(r"R\$\s*([\d\.\s]+(?:,\d{2})?)", text, re.I))
+    if not matches:
+        matches = list(re.finditer(r"([\d\.\s]+)\s*mil", text, re.I))
+        return _normalizar_preco(matches[0].group(1) + "000") if matches else 0
+
+    ids = re.findall(r"\d{4,}", url)
+    scored = []
+    for match in matches:
+        context = text[max(0, match.start() - 180):match.end() + 80]
+        preceding_context = text[max(0, match.start() - 180):match.start()]
+        currency_context = preceding_context.rsplit("R$", 1)[-1]
+        if re.search(r"valor\s*\(\s*$", preceding_context[-30:], re.I):
+            continue
+        if re.search(r"valor\s+(?:mínimo|máximo)|(?:mínimo|máximo)\s+valor", currency_context, re.I):
+            continue
+        if re.search(r"imóveis?\s+(?:semelhantes|relacionados)|recomendados?|você\s+também\s+pode\s+gostar", preceding_context, re.I):
+            continue
+        value = _normalizar_preco(match.group(1))
+        if not value:
+            continue
+        score = text.count(match.group(0))
+        if any(identifier in context for identifier in ids):
+            score += 20
+        if re.search(r"\b(?:valor\s+(?:de\s+)?venda|preço\s+(?:de\s+)?venda)\b", context, re.I):
+            score += 20
+        elif re.search(r"\b(?:valor|preço)\b", context, re.I):
+            score += 5
+        scored.append((score, match.start(), value))
+    return max(scored, key=lambda item: (item[0], -item[1]))[2] if scored else 0
+
+
+def _normalizar_preco(value):
+    if isinstance(value, (int, float)):
+        number = float(value)
+        if number.is_integer():
+            return int(number)
+        return f"{number:.2f}".replace(".", ",")
+
+    raw = re.sub(r"[^\d,.]", "", str(value))
+    if not raw:
+        return 0
+    if "," in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif raw.count(".") == 1 and len(raw.rsplit(".", 1)[1]) == 2:
+        raw = raw.replace(",", "")
+    else:
+        raw = raw.replace(".", "")
+    try:
+        number = float(raw)
+        if number.is_integer():
+            return int(number)
+        return f"{number:.2f}".replace(".", ",")
+    except ValueError:
+        return 0
 
 
 def _extrair_comodos(text: str) -> Tuple[int, int, int]:
     quartos = banheiros = garagem = 0
 
     numbers = {"um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3, "três": 3, "quatro": 4, "cinco": 5, "seis": 6}
+    all_labels = (
+        r"quartos?", r"dormit[óo]rios?", r"dorms?", r"bedrooms?", r"suítes?", r"suites?",
+        r"banheiros?", r"bathrooms?", r"vagas?", r"garagens?", r"parking", r"carports?",
+    )
 
-    def extract_count(labels, choose_largest=False, prefer_value_before=False):
+    def extract_count(labels, choose_largest=False):
         label_pattern = "(?:" + "|".join(labels) + ")"
         value_pattern = r"(\d+|" + "|".join(numbers) + r")"
-        if prefer_value_before:
-            matches = list(re.finditer(rf"{value_pattern}\s*{label_pattern}", text, re.I))
-            if matches:
-                values = [match.group(1).lower() for match in matches]
-                parsed = [int(value) if value.isdigit() else numbers[value] for value in values]
-                return max(parsed, default=0) if choose_largest else parsed[0]
+        explicit_matches = list(re.finditer(rf"{label_pattern}\s*[:=]\s*{value_pattern}", text, re.I))
+        if explicit_matches:
+            values = [match.group(1).lower() for match in explicit_matches]
+            parsed = [int(value) if value.isdigit() else numbers[value] for value in values]
+            return max(parsed, default=0) if choose_largest else parsed[0]
+
+        all_label_pattern = "(?:" + "|".join(all_labels) + ")"
+        before_label = list(re.finditer(rf"{value_pattern}\s*{all_label_pattern}", text, re.I))
+        after_label = list(re.finditer(rf"{all_label_pattern}\s*[:\-]?\s*{value_pattern}", text, re.I))
+        prefer_after_label = len(after_label) > len(before_label)
+        pattern = (
+            rf"{label_pattern}\s*[:\-]?\s*{value_pattern}"
+            if prefer_after_label
+            else rf"{value_pattern}\s*{label_pattern}"
+        )
+        matches = list(re.finditer(pattern, text, re.I))
+        if matches:
+            values = [match.group(1).lower() for match in matches]
+            parsed = [int(value) if value.isdigit() else numbers[value] for value in values]
+            return max(parsed, default=0) if choose_largest else parsed[0]
+
         matches = list(re.finditer(rf"{label_pattern}\s*[:\-]?\s*{value_pattern}", text, re.I))
         matches = [
             match for match in matches
@@ -320,7 +447,7 @@ def _extrair_comodos(text: str) -> Tuple[int, int, int]:
     if not quartos:
         quartos = extract_count((r"suítes?", r"suites?"), choose_largest=True)
     banheiros = extract_count((r"banheiros?", r"bathrooms?"))
-    garagem = extract_count((r"vagas?", r"garagens?", r"parking", r"carports?"), prefer_value_before=True)
+    garagem = extract_count((r"vagas?", r"garagens?", r"parking", r"carports?"))
 
     return quartos, banheiros, garagem
 
@@ -366,26 +493,32 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
         # Limite a coleta ao contêiner mais provável da galeria do anúncio.
         gallery_roots = _localizar_galerias(soup)
         for root in gallery_roots:
-            for tag in root.find_all(["img", "source"]):
-                for attr in ["src", "data-src", "data-lazy-src", "srcset"]:
-                    value = tag.get(attr)
-                    if not value:
-                        continue
-                    urls = [part.strip().split(" ")[0] for part in str(value).split(",")]
-                    for image_url in urls:
-                        if image_url.startswith("http") and not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                            imagens.append(image_url)
+            for tag in root.find_all(["img", "source", "a"]):
+                if tag.name in ("img", "source"):
+                    image_urls = _urls_da_tag(tag, url_imovel)
+                else:
+                    image_urls = [
+                        urljoin(url_imovel, tag.get(attr))
+                        for attr in ("data-fancybox", "data-lightbox", "data-gallery")
+                        if tag.get(attr) and tag.get(attr).startswith(("http://", "https://", "/"))
+                    ]
+                    href = tag.get("href", "")
+                    if href and re.search(r"\.(?:jpe?g|png|webp|avif)(?:[?#]|$)", href, re.I):
+                        image_urls.append(urljoin(url_imovel, href))
+                for image_url in image_urls:
+                    if not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
+                        imagens.append(image_url)
 
-        # Só usa heurísticas genéricas quando nenhum contêiner nomeado foi encontrado.
-        if not gallery_roots:
-            imagens.extend(await _extrair_fotos_fallback(page, soup, url_imovel))
+        imagens.extend(await _extrair_fotos_fallback(page, soup, url_imovel))
 
         for _ in range(12):
             try:
                 for selector in _seletores_galeria():
                     cards = await page.query_selector_all(f"{selector} img, {selector} source")
                     for card in cards:
-                        src = await card.get_attribute("src") or await card.get_attribute("data-src")
+                        src = await card.evaluate(
+                            "(image) => image.currentSrc || image.getAttribute('data-original') || image.getAttribute('data-full') || image.getAttribute('data-src') || image.getAttribute('data-lazy-src') || image.getAttribute('src')"
+                        )
                         if src and src.startswith("http") and not any(k in src.lower() for k in ["logo", "avatar", "icon", "badge"]):
                             imagens.append(src)
                 await page.mouse.wheel(0, 500)
@@ -414,7 +547,7 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
 
         # O Render gratuito não possui disco persistente. Mantemos as URLs no
         # Neon e baixamos os arquivos somente durante a publicação.
-        resultado = imagens[:12]
+        resultado = imagens
         if not gallery_roots and len(resultado) < 2:
             logger.warning(f"Fallback de galeria não encontrou fotos suficientes em {url_imovel}")
         return resultado
@@ -422,6 +555,30 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
     except Exception as e:
         logger.warning(f"Erro fotos multi-site: {e}")
         return []
+
+
+def _urls_da_tag(tag, url_imovel):
+    for attr in ("data-original", "data-full", "data-large"):
+        if tag.get(attr):
+            return [urljoin(url_imovel, tag[attr])]
+
+    for attr in ("data-srcset", "data-lazy-srcset", "srcset"):
+        srcset = tag.get(attr)
+        if not srcset:
+            continue
+        candidates = []
+        for part in str(srcset).split(","):
+            pieces = part.strip().split()
+            if pieces:
+                width = _as_number(pieces[1].rstrip("w")) if len(pieces) > 1 and pieces[1].endswith("w") else 0
+                candidates.append((width, pieces[0]))
+        if candidates:
+            return [urljoin(url_imovel, max(candidates, key=lambda item: item[0])[1])]
+
+    for attr in ("data-src", "data-lazy-src", "src"):
+        if tag.get(attr):
+            return [urljoin(url_imovel, tag[attr])]
+    return []
 
 
 def _localizar_galerias(soup):
@@ -443,7 +600,7 @@ def _localizar_galerias(soup):
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         selected = []
         for _, _, tag in candidates:
-            if any(tag is parent or tag in parent.parents for parent in selected):
+            if any(tag is parent or parent in tag.parents for parent in selected):
                 continue
             selected.append(tag)
             if len(selected) == 3:
@@ -469,12 +626,9 @@ def _urls_de_atributos_de_galeria(soup, url_imovel):
     for tag in soup.find_all(["img", "source", "a"]):
         if _tag_em_secao_excluida(tag):
             continue
-        values = [tag.get(attr) for attr in attrs if tag.get(attr)]
+        values = _urls_da_tag(tag, url_imovel) if tag.name in ("img", "source") else [tag.get(attr) for attr in attrs if tag.get(attr)]
         if tag.get("href") and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery")):
             values.append(tag.get("href"))
-        srcset = tag.get("srcset")
-        if srcset and "," in srcset:
-            values.extend(part.strip().split(" ")[0] for part in srcset.split(","))
         for value in values:
             if isinstance(value, str) and value.startswith(("http://", "https://", "/")):
                 urls.append(urljoin(url_imovel, value))
@@ -493,7 +647,6 @@ async def _extrair_fotos_fallback(page, soup, url_imovel):
             (images) => images.map((image) => {
                 const rect = image.getBoundingClientRect();
                 const excluded = /related|similar|semelhante|recomend|corretor|agent|suggest|partner|parceir/i;
-                const excludedParent = [...image.closestAll ? image.closestAll('*') : []];
                 let node = image;
                 let inExcludedSection = false;
                 while (node && node.tagName !== 'HTML') {

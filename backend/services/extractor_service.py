@@ -53,7 +53,7 @@ class ExtractorService:
 
         existing.descricao = clean_text(
             data.get("descricao"),
-            8000
+            12000
         )
 
         existing.endereco = clean_text(

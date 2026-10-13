@@ -480,20 +480,11 @@ def _extrair_endereco(soup, text: str) -> str:
 
 
 async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
-    imagens = []
     try:
-        if preferred_urls:
-            imagens.extend(preferred_urls)
-
-        for tag in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
-            image_url = tag.get("content")
-            if image_url:
-                imagens.append(urljoin(url_imovel, image_url))
-
-        # Limite a coleta ao contêiner mais provável da galeria do anúncio.
+        imagens = []
         gallery_roots = _localizar_galerias(soup)
         for root in gallery_roots:
-            for tag in root.find_all(["img", "source", "a"]):
+            for tag in root.find_all(True):
                 if tag.name in ("img", "source"):
                     image_urls = _urls_da_tag(tag, url_imovel)
                 else:
@@ -503,54 +494,82 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
                         if tag.get(attr) and tag.get(attr).startswith(("http://", "https://", "/"))
                     ]
                     href = tag.get("href", "")
-                    if href and re.search(r"\.(?:jpe?g|png|webp|avif)(?:[?#]|$)", href, re.I):
+                    if (
+                        href
+                        and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery"))
+                        and re.search(r"\.(?:jpe?g|png|webp|avif)(?:[?#]|$)", href, re.I)
+                    ):
                         image_urls.append(urljoin(url_imovel, href))
                 for image_url in image_urls:
-                    if not any(k in image_url.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                        imagens.append(image_url)
+                    imagens.append(image_url)
 
-        imagens.extend(await _extrair_fotos_fallback(page, soup, url_imovel))
-
-        for _ in range(12):
-            try:
-                for selector in _seletores_galeria():
+        if not imagens:
+            for selector in _seletores_galeria():
+                try:
                     cards = await page.query_selector_all(f"{selector} img, {selector} source")
-                    for card in cards:
-                        src = await card.evaluate(
-                            "(image) => image.currentSrc || image.getAttribute('data-original') || image.getAttribute('data-full') || image.getAttribute('data-src') || image.getAttribute('data-lazy-src') || image.getAttribute('src')"
-                        )
-                        if src and src.startswith("http") and not any(k in src.lower() for k in ["logo", "avatar", "icon", "badge"]):
-                            imagens.append(src)
-                await page.mouse.wheel(0, 500)
-                await asyncio.sleep(0.6)
-            except Exception:
-                break
+                except Exception:
+                    continue
+                for card in cards:
+                    src = await card.evaluate(
+                        """image => {
+                            const excluded = /related|similar|semelhante|recomend|corretor|agent|broker|suggest|partner|parceir/i;
+                            let node = image;
+                            while (node && node.tagName !== 'HTML') {
+                                const marker = `${node.tagName} ${node.id || ''} ${node.className || ''} ${node.getAttribute('data-testid') || ''} ${node.getAttribute('aria-label') || ''}`;
+                                if (excluded.test(marker)) return null;
+                                node = node.parentElement;
+                            }
+                            const picture = image.closest('picture');
+                            const medium = picture && picture.querySelector('[data-md-src]');
+                            return (medium && medium.getAttribute('data-md-src'))
+                                || image.currentSrc
+                                || image.getAttribute('data-original')
+                                || image.getAttribute('data-full')
+                                || image.getAttribute('data-src')
+                                || image.getAttribute('data-lazy-src')
+                                || image.getAttribute('src');
+                        }"""
+                    )
+                    if src:
+                        imagens.append(urljoin(url_imovel, src))
+
+        if not imagens and preferred_urls:
+            imagens.extend(preferred_urls)
+
+        if not imagens:
+            imagens.extend(await _extrair_fotos_fallback(page, soup, url_imovel))
+
+        if not imagens:
+            for tag in soup.select("meta[property='og:image'], meta[name='twitter:image']"):
+                image_url = tag.get("content")
+                if image_url:
+                    imagens.append(urljoin(url_imovel, image_url))
 
         imagens_filtradas = []
         urls_vistas = set()
-        urls_preferidas = {imagem.split("?")[0] for imagem in (preferred_urls or [])}
-        termos_descartados = ("logo", "avatar", "icon", "badge", "banner", "favicon", "sprite", "tracking")
-        termos_imovel = ("/properties/", "/property/", "/images/", "/uploads/", "/media/", "imovel", "foto", "photo", "gallery", "listing")
+        termos_descartados = (
+            "logo", "avatar", "icon", "badge", "banner", "favicon",
+            "sprite", "tracking", "image-loader", "placeholder",
+        )
         for imagem in imagens:
-            imagem = imagem.split("?")[0]
+            if not isinstance(imagem, str):
+                continue
+            imagem = imagem.strip().split("#", 1)[0]
             imagem_lower = imagem.lower()
-            if not imagem or imagem in urls_vistas or any(termo in imagem_lower for termo in termos_descartados):
+            if (
+                not imagem.startswith(("http://", "https://"))
+                or imagem in urls_vistas
+                or any(termo in imagem_lower for termo in termos_descartados)
+            ):
                 continue
             urls_vistas.add(imagem)
-            prioridade = sum(1 for termo in termos_imovel if termo in imagem_lower)
-            if imagem in urls_preferidas:
-                prioridade += 100
-            imagens_filtradas.append((prioridade, len(imagens_filtradas), imagem))
-
-        # URLs do anúncio vêm antes de banners e imagens decorativas.
-        imagens = [imagem for _, _, imagem in sorted(imagens_filtradas, key=lambda item: (-item[0], item[1]))]
+            imagens_filtradas.append(imagem)
 
         # O Render gratuito não possui disco persistente. Mantemos as URLs no
         # Neon e baixamos os arquivos somente durante a publicação.
-        resultado = imagens
-        if not gallery_roots and len(resultado) < 2:
+        if not gallery_roots and len(imagens_filtradas) < 2:
             logger.warning(f"Fallback de galeria não encontrou fotos suficientes em {url_imovel}")
-        return resultado
+        return imagens_filtradas
 
     except Exception as e:
         logger.warning(f"Erro fotos multi-site: {e}")
@@ -558,7 +577,13 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
 
 
 def _urls_da_tag(tag, url_imovel):
-    for attr in ("data-original", "data-full", "data-large"):
+    picture = tag.find_parent("picture") if tag.name == "img" else None
+    if picture:
+        for source in picture.find_all("source"):
+            if source.get("data-md-src"):
+                return [urljoin(url_imovel, source["data-md-src"])]
+
+    for attr in ("data-md-src", "data-original", "data-full", "data-large"):
         if tag.get(attr):
             return [urljoin(url_imovel, tag[attr])]
 
@@ -583,8 +608,14 @@ def _urls_da_tag(tag, url_imovel):
 
 def _localizar_galerias(soup):
     """Retorna apenas raízes de galeria, evitando recomendações e imagens de layout."""
-    gallery_terms = ("gallery", "galeria", "carousel", "carrossel", "swiper", "lightbox", "fotos", "photos", "property-images", "listing-media")
-    excluded_terms = ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest")
+    gallery_terms = (
+        "gallery", "galeria", "carousel", "carrossel", "swiper", "lightbox",
+        "fotos", "photos", "property-images", "listing-media", "f-carousel",
+    )
+    excluded_terms = (
+        "related", "similar", "semelhante", "recomend", "corretor",
+        "agent", "broker", "suggest",
+    )
     candidates = []
     for tag in soup.find_all(["div", "section", "article", "ul"]):
         attrs = " ".join(str(tag.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
@@ -592,11 +623,25 @@ def _localizar_galerias(soup):
             continue
         images = tag.find_all(["img", "source"])
         named_score = sum(term in attrs for term in gallery_terms)
+        wrapper_images = tag.select(".WrapperImage")
+        has_gallery_data = any(tag.has_attr(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery"))
         score = named_score * 20 + min(len(images), 12)
-        if named_score and images:
+        if len(wrapper_images) >= 2:
+            score += min(len(wrapper_images), 12) * 3
+        if has_gallery_data:
+            score += 20
+        if (named_score or len(wrapper_images) >= 2 or has_gallery_data) and images:
             candidates.append((score, len(images), tag))
 
     if candidates:
+        candidate_tags = [item[2] for item in candidates]
+        candidates = [
+            item for item in candidates
+            if not any(
+                any(parent is candidate for candidate in candidate_tags)
+                for parent in item[2].parents
+            )
+        ]
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         selected = []
         for _, _, tag in candidates:
@@ -610,7 +655,10 @@ def _localizar_galerias(soup):
 
 
 def _tag_em_secao_excluida(tag):
-    excluded_terms = ("related", "similar", "semelhante", "recomend", "corretor", "agent", "suggest", "partner", "parceir")
+    excluded_terms = (
+        "related", "similar", "semelhante", "recomend", "corretor",
+        "agent", "broker", "suggest", "partner", "parceir",
+    )
     current = tag
     while current and getattr(current, "name", None) != "html":
         attrs = " ".join(str(current.get(attr, "")) for attr in ("id", "class", "data-testid", "aria-label")).lower()
@@ -623,11 +671,20 @@ def _tag_em_secao_excluida(tag):
 def _urls_de_atributos_de_galeria(soup, url_imovel):
     urls = []
     attrs = ("data-src", "data-lazy-src", "data-fancybox", "data-lightbox", "data-gallery")
-    for tag in soup.find_all(["img", "source", "a"]):
+    gallery_roots = _localizar_galerias(soup)
+    for tag in soup.find_all(True):
         if _tag_em_secao_excluida(tag):
             continue
-        values = _urls_da_tag(tag, url_imovel) if tag.name in ("img", "source") else [tag.get(attr) for attr in attrs if tag.get(attr)]
-        if tag.get("href") and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery")):
+        in_gallery = any(tag is root or root in tag.parents for root in gallery_roots)
+        marked_as_gallery = any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery"))
+        values = (
+            _urls_da_tag(tag, url_imovel)
+            if tag.name in ("img", "source") and (in_gallery or marked_as_gallery)
+            else []
+        )
+        if marked_as_gallery:
+            values.extend(tag.get(attr) for attr in attrs if tag.get(attr))
+        if tag.get("href") and marked_as_gallery:
             values.append(tag.get("href"))
         for value in values:
             if isinstance(value, str) and value.startswith(("http://", "https://", "/")):
@@ -646,7 +703,7 @@ async def _extrair_fotos_fallback(page, soup, url_imovel):
             """
             (images) => images.map((image) => {
                 const rect = image.getBoundingClientRect();
-                const excluded = /related|similar|semelhante|recomend|corretor|agent|suggest|partner|parceir/i;
+                const excluded = /related|similar|semelhante|recomend|corretor|agent|broker|suggest|partner|parceir/i;
                 let node = image;
                 let inExcludedSection = false;
                 while (node && node.tagName !== 'HTML') {
@@ -687,5 +744,7 @@ def _seletores_galeria():
     return (
         "[class*='gallery']", "[class*='galeria']", "[class*='carousel']",
         "[class*='carrossel']", "[class*='swiper']", "[class*='lightbox']",
+        "[class*='f-carousel']", "[class*='property-gallery']",
+        "[class*='WrapperImage']", "[data-fancybox='gallery']",
         "[data-testid*='gallery']", "[data-testid*='photo']",
     )

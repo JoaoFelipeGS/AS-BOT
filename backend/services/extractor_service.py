@@ -19,6 +19,13 @@ from backend.services.gemini_service import gemini_service
 from backend.stealth import stealth
 # --------------------------------------------
 
+
+def _reformulacao_preserva_descricao(original, reformulada):
+    original_length = len(" ".join((original or "").split()))
+    reformulada_length = len(" ".join((reformulada or "").split()))
+    return original_length > 0 and reformulada_length >= original_length * 0.8
+
+
 class ExtractorService:
 
     @staticmethod
@@ -189,8 +196,13 @@ class ExtractorService:
                             timeout=10,
                         )
                         if reformulated and reformulated != data["descricao"]:
-                            data["descricao"] = reformulated
-                            logger.info("✅ Descrição reformulada com sucesso!")
+                            if _reformulacao_preserva_descricao(data["descricao"], reformulated):
+                                data["descricao"] = reformulated
+                                logger.info("✅ Descrição reformulada com sucesso!")
+                            else:
+                                logger.warning(
+                                    "Reformulação descartada por encurtar muito a descrição original"
+                                )
                         else:
                             logger.info("⚠️ Descrição mantida (IA retornou original ou falhou)")
                     except Exception as e:
@@ -261,4 +273,3 @@ async def _is_antibot_checkpoint(page) -> bool:
         return any(marker in title or marker in body_text for marker in markers)
     except Exception:
         return False
-

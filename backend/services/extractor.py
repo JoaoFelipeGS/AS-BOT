@@ -34,6 +34,32 @@ async def extrair_dados(page, url):
     except Exception:
         pass
 
+    if (urlparse(url).hostname or "").lower().removeprefix("www.") == "asimobiliaria.com":
+        try:
+            expanded = await page.evaluate(
+                """() => {
+                    const candidates = [...document.querySelectorAll('button, a, [role="button"], div, span')];
+                    const control = candidates.find((element) => {
+                        const text = (element.innerText || '').trim();
+                        const rect = element.getBoundingClientRect();
+                        return text === 'Mais fotos'
+                            && rect.width > 0
+                            && rect.height > 0
+                            && ![...element.children].some((child) => (child.innerText || '').trim() === text);
+                    });
+                    if (!control) return false;
+                    control.click();
+                    return true;
+                }"""
+            )
+            if expanded:
+                await page.wait_for_timeout(900)
+        except Exception as error:
+            logger.warning(
+                f"Não foi possível expandir a galeria antes da extração em {url} "
+                f"({error.__class__.__name__})"
+            )
+
     try:
         html = await page.content()
     except Exception as error:
@@ -297,44 +323,112 @@ def _extrair_texto_principal(soup):
 
 
 def _extrair_descricao(soup, principal_text: str, structured_description: str = "") -> str:
-    selectors = (
-        "[itemprop='description']", "[class*='description']", "[class*='descricao']",
-        "[id*='description']", "[id*='descricao']",
+    def clean(value):
+        return re.sub(r"\s+", " ", value or "").strip()
+
+    def is_description(value):
+        lowered = value.lower()
+        noise_terms = (
+            "imóveis relacionados", "imóveis semelhantes", "imoveis relacionados",
+            "imoveis semelhantes", "solicite mais informações", "quero mais informações",
+            "envie uma mensagem", "fale com um corretor", "compartilhe em suas redes",
+        )
+        return len(value) >= 60 and not any(term in lowered for term in noise_terms)
+
+    # Prefer explicit listing-description fields; broad class substring matches
+    # also capture condo, SEO, and related-property descriptions on some portals.
+    specific_selectors = (
+        ".property-description-text",
+        "[data-testid='property-description']",
+        "[itemprop='description']",
+        ".description-text",
+        ".descricao-imovel",
+        "#description",
+        "#descricao",
     )
-    candidates = []
-    for selector in selectors:
+    for selector in specific_selectors:
         for tag in soup.select(selector):
             if _tag_excluida(tag):
                 continue
-            value = tag.get("content") or tag.get_text(" ", strip=True)
-            value = re.sub(r"\s+", " ", value).strip()
-            if len(value) >= 80:
-                candidates.append(value)
+            value = clean(tag.get("content") or tag.get_text(" ", strip=True))
+            if is_description(value):
+                return value[:12000]
 
-    if candidates:
-        return max(candidates, key=len)[:12000]
+    # Gilmar and similar sites title the listing copy and place its text in
+    # the next sibling, rather than marking the description semantically.
+    description_headings = {
+        "sobre o imóvel", "sobre o imovel", "descrição do imóvel",
+        "descricao do imovel", "descrição do anúncio", "descricao do anuncio",
+    }
+    for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "span", "strong"]):
+        if clean(heading.get_text(" ", strip=True)).casefold() not in description_headings:
+            continue
+        if _tag_excluida(heading):
+            continue
+        container = heading.parent
+        if not container:
+            continue
+        siblings = list(container.children)
+        try:
+            heading_index = siblings.index(heading)
+        except ValueError:
+            heading_index = -1
+        for sibling in siblings[heading_index + 1:]:
+            if getattr(sibling, "name", None) is None:
+                continue
+            value = clean(sibling.get_text(" ", strip=True))
+            if is_description(value):
+                return value[:12000]
+        following = container.find_next_sibling()
+        if following and not _tag_excluida(following):
+            value = clean(following.get_text(" ", strip=True))
+            if is_description(value):
+                return value[:12000]
+        child = container.find(["p", "div", "section"], recursive=False)
+        if child and child is not heading:
+            value = clean(child.get_text(" ", strip=True))
+            if is_description(value):
+                return value[:12000]
 
-    if structured_description and len(structured_description.strip()) >= 80:
-        return re.sub(r"\s+", " ", structured_description).strip()[:12000]
+    if structured_description:
+        value = clean(structured_description)
+        if is_description(value):
+            return value[:12000]
 
+    # Avoid selecting a wrapper that aggregates the whole page or its
+    # recommendations: only inspect leaf-like copy blocks as a fallback.
     fallback_candidates = []
-    for el in soup.select("p, li, article, div"):
-        if _tag_excluida(el):
+    for element in soup.select("p, li, dd, [class*='description'], [class*='descricao']"):
+        if _tag_excluida(element):
             continue
-        txt = re.sub(r"\s+", " ", el.get_text(" ", strip=True))
-        if len(txt) < 80:
+        ancestors = [element, *element.parents]
+        markers = " ".join(
+            " ".join(str(node.get(attr, "")) for attr in ("id", "class", "data-testid")).lower()
+            for node in ancestors
+            if getattr(node, "attrs", None)
+        )
+        if any(term in markers for term in ("condo-description", "condominium-description", "empreendimento")):
             continue
-        lowered = txt.lower()
-        if any(k in lowered for k in ["quartos", "banheiros", "m²", "dormitórios", "área", "garagem", "imóvel"]):
-            fallback_candidates.append(txt)
-
+        if element.select("p, li, dd"):
+            continue
+        value = clean(element.get_text(" ", strip=True))
+        if not is_description(value):
+            continue
+        lowered = value.lower()
+        if any(term in lowered for term in ("quartos", "banheiros", "m²", "dormitórios", "área", "garagem", "imóvel")):
+            fallback_candidates.append(value)
     if fallback_candidates:
         return max(fallback_candidates, key=len)[:12000]
 
     meta_desc = soup.select_one("meta[name='description']")
     if meta_desc and meta_desc.get("content"):
-        return re.sub(r"\s+", " ", meta_desc.get("content")).strip()[:12000]
-    return principal_text[:12000]
+        value = clean(meta_desc.get("content"))
+        if is_description(value):
+            return value[:12000]
+
+    # principal_text can include navigation, contact forms, and recommendations;
+    # returning it as a description turns missing data into confidently wrong data.
+    return ""
 
 
 def _extrair_preco(text: str, url: str = ""):
@@ -483,25 +577,37 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
     try:
         imagens = []
         gallery_roots = _localizar_galerias(soup)
-        for root in gallery_roots:
-            for tag in root.find_all(True):
-                if tag.name in ("img", "source"):
-                    image_urls = _urls_da_tag(tag, url_imovel)
-                else:
-                    image_urls = [
-                        urljoin(url_imovel, tag.get(attr))
-                        for attr in ("data-fancybox", "data-lightbox", "data-gallery")
-                        if tag.get(attr) and tag.get(attr).startswith(("http://", "https://", "/"))
-                    ]
-                    href = tag.get("href", "")
-                    if (
-                        href
-                        and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery"))
-                        and re.search(r"\.(?:jpe?g|png|webp|avif)(?:[?#]|$)", href, re.I)
-                    ):
-                        image_urls.append(urljoin(url_imovel, href))
-                for image_url in image_urls:
-                    imagens.append(image_url)
+        hostname = (urlparse(url_imovel).hostname or "").lower()
+        if hostname.removeprefix("www.") == "imobiliariauniao.com.br":
+            imagens = await _extrair_fotos_api_uniao(page)
+            if imagens:
+                logger.info(f"Fotos obtidas pela API pública do anúncio: {len(imagens)}")
+
+        if not imagens and hostname.removeprefix("www.") == "asimobiliaria.com":
+            imagens = _extrair_fotos_as(soup, url_imovel)
+
+        if not imagens and hostname.removeprefix("www.") == "premiermarilia.com.br":
+            imagens = _extrair_fotos_premier(soup, url_imovel)
+
+        if not imagens:
+            for root in gallery_roots:
+                for tag in root.find_all(True):
+                    if tag.name in ("img", "source"):
+                        image_urls = _urls_da_tag(tag, url_imovel)
+                    else:
+                        image_urls = [
+                            urljoin(url_imovel, tag.get(attr))
+                            for attr in ("data-fancybox", "data-lightbox", "data-gallery")
+                            if tag.get(attr) and tag.get(attr).startswith(("http://", "https://", "/"))
+                        ]
+                        href = tag.get("href", "")
+                        if (
+                            href
+                            and any(tag.get(attr) for attr in ("data-fancybox", "data-lightbox", "data-gallery"))
+                            and re.search(r"\.(?:jpe?g|png|webp|avif)(?:[?#]|$)", href, re.I)
+                        ):
+                            image_urls.append(urljoin(url_imovel, href))
+                    imagens.extend(image_urls)
 
         if not imagens:
             for selector in _seletores_galeria():
@@ -546,7 +652,6 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
                     imagens.append(urljoin(url_imovel, image_url))
 
         imagens_filtradas = []
-        urls_vistas = set()
         termos_descartados = (
             "logo", "avatar", "icon", "badge", "banner", "favicon",
             "sprite", "tracking", "image-loader", "placeholder",
@@ -558,12 +663,11 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
             imagem_lower = imagem.lower()
             if (
                 not imagem.startswith(("http://", "https://"))
-                or imagem in urls_vistas
                 or any(termo in imagem_lower for termo in termos_descartados)
             ):
                 continue
-            urls_vistas.add(imagem)
             imagens_filtradas.append(imagem)
+        imagens_filtradas = _deduplicar_fotos(imagens_filtradas)
 
         # O Render gratuito não possui disco persistente. Mantemos as URLs no
         # Neon e baixamos os arquivos somente durante a publicação.
@@ -572,8 +676,148 @@ async def _extrair_fotos(page, soup, url_imovel, preferred_urls=None):
         return imagens_filtradas
 
     except Exception as e:
-        logger.warning(f"Erro fotos multi-site: {e}")
+        logger.warning(f"Erro fotos multi-site em {url_imovel}: {e.__class__.__name__}")
         return []
+
+
+async def _extrair_fotos_api_uniao(page):
+    """Read the current listing's image records from União's loaded public API."""
+    try:
+        urls = await page.evaluate(
+            """async () => {
+                const code = location.pathname.match(/\\/imovel\\/(\\d+)/)?.[1];
+                if (!code) return [];
+                const endpoint = performance.getEntriesByType('resource')
+                    .map((entry) => entry.name)
+                    .find((resource) => {
+                        try {
+                            const parsed = new URL(resource);
+                            return parsed.hostname === 'api.dreamkeys.com.br'
+                                && parsed.pathname === `/public/properties/code-${code}`;
+                        } catch {
+                            return false;
+                        }
+                    });
+                if (!endpoint) return [];
+                const response = await fetch(endpoint);
+                if (!response.ok) return [];
+                const property = await response.json();
+                if (!property || !Array.isArray(property.images)) return [];
+                return property.images
+                    .filter((image) => image
+                        && (!image.mediaType || /^image(?:\\/|$)/i.test(image.mediaType))
+                        && typeof image.url === 'string'
+                        && image.url.startsWith('https://'))
+                    .map((image) => image.url);
+            }"""
+        )
+    except Exception as error:
+        logger.warning(f"Falha consultando a API de fotos da União ({error.__class__.__name__})")
+        return []
+    return urls if isinstance(urls, list) else []
+
+
+def _extrair_fotos_as(soup, url_imovel):
+    """Use only the expanded AS Imobiliária gallery for the current property."""
+    detail_gallery = soup.select_one(".Detail__gallery")
+    if not detail_gallery:
+        detail_gallery = next(
+            (
+                tag for tag in soup.find_all(True)
+                if "detail__gallery" in " ".join(tag.get("class", [])).lower()
+            ),
+            None,
+        )
+    if not detail_gallery:
+        return []
+
+    property_pattern = re.compile(r"/properties/([a-f0-9-]+)/images/", re.I)
+    property_ids = []
+    for tag in detail_gallery.find_all(["img", "source"]):
+        for image_url in _urls_da_tag(tag, url_imovel):
+            match = property_pattern.search(urlparse(image_url).path)
+            if match and match.group(1) not in property_ids:
+                property_ids.append(match.group(1))
+    if not property_ids:
+        return []
+    property_id = property_ids[0].lower()
+
+    modal = soup.select_one(".ReactModal__Content")
+    scope = modal or detail_gallery
+    images = []
+    for tag in scope.find_all(["img", "source"]):
+        for image_url in _urls_da_tag(tag, url_imovel):
+            parsed = urlparse(image_url)
+            match = property_pattern.search(parsed.path)
+            if (
+                match
+                and match.group(1).lower() == property_id
+                and not re.search(r"/\d+x\d+/(?:outside|inside)/", parsed.path, re.I)
+            ):
+                images.append(image_url)
+    return _deduplicar_fotos(images)
+
+
+def _extrair_fotos_premier(soup, url_imovel):
+    """Restrict Premier photos to gallery items belonging to the listing."""
+    gallery_roots = [
+        root for root in soup.select(".gallery")
+        if not _tag_em_secao_excluida(root)
+    ]
+    if not gallery_roots:
+        return []
+    images = []
+    for root in gallery_roots:
+        for item in root.select(".gallery-item"):
+            if _tag_em_secao_excluida(item):
+                continue
+            image = item.find("img")
+            if image:
+                images.extend(_urls_da_tag(image, url_imovel))
+            if not image:
+                link = item.find("a", href=True)
+                if link:
+                    images.append(urljoin(url_imovel, link["href"]))
+    return _deduplicar_fotos(images)
+
+
+def _asset_key(image_url):
+    parsed = urlparse(image_url)
+    path = re.sub(r"/\d+x\d+/(?:outside|inside)/", "/", parsed.path, flags=re.I)
+    directory, _, filename = path.rpartition("/")
+    stem, _ = os.path.splitext(filename)
+    stem = re.sub(r"_(?:sm|md|lg|small|medium|large|thumb|thumbnail)$", "", stem, flags=re.I)
+    return parsed.netloc.lower(), directory.lower(), stem.lower()
+
+
+def _image_quality(image_url):
+    path = urlparse(image_url).path.lower()
+    score = 0
+    if not re.search(r"/\d+x\d+/(?:outside|inside)/", path):
+        score += 10
+    if re.search(r"_(?:md|medium)(?:\.[^/]+)?$", path):
+        score += 3
+    if path.endswith((".webp", ".avif")):
+        score += 2
+    if path.endswith((".jpg", ".jpeg", ".png")):
+        score += 1
+    return score
+
+
+def _deduplicar_fotos(urls):
+    """Collapse carousel clones, responsive sizes, and alternate formats by asset."""
+    selected = {}
+    for image_url in urls:
+        if not isinstance(image_url, str):
+            continue
+        image_url = image_url.strip().split("#", 1)[0]
+        if not image_url.startswith(("http://", "https://")):
+            continue
+        key = _asset_key(image_url)
+        current = selected.get(key)
+        if current is None or _image_quality(image_url) > _image_quality(current):
+            selected[key] = image_url
+    return list(selected.values())
 
 
 def _urls_da_tag(tag, url_imovel):

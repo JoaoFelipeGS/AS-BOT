@@ -6,10 +6,9 @@ import random
 import tempfile
 from urllib.parse import urlparse
 from playwright.async_api import Page
-from backend.config import settings
-from backend.utils import setup_logger
+import backend.utils as utils
 
-logger = setup_logger("facebook_handler")
+logger = utils.setup_logger("facebook_handler")
 FACEBOOK_RENTAL_URL = "https://www.facebook.com/marketplace/create/rental"
 
 # =========================================================
@@ -176,7 +175,7 @@ async def _upload_imagens_por_referencia(page, image_urls, imovel_id):
 async def publicar_imovel(page: Page, imovel_id: int, fila_id: int, dados_imovel: dict):
     async with publish_lock:
         try:
-            logger.info(f"--- INICIANDO SEQUÊNCIA: Imóvel {imovel_id} ---")
+            logger.info(f"--- INICIANDO SEQUÊNCIA: Imóvel {imovel_id}, fila {fila_id} ---")
             await page.goto(FACEBOOK_RENTAL_URL, wait_until="domcontentloaded")
             await asyncio.sleep(7)
 
@@ -185,46 +184,57 @@ async def publicar_imovel(page: Page, imovel_id: int, fila_id: int, dados_imovel
                 logger.info(f"[{imovel_id}] ✅ Fotos enviadas.")
                 await asyncio.sleep(10) 
             else:
-                logger.warning(f"[{imovel_id}] ⚠️ Fotos falharam.")
+                logger.error(f"[{imovel_id}] Falha no upload das fotos; publicação interrompida.")
+                return False
 
             # 2. PREÇO
             preco_input = await _achar_input_original(page, ["Preço", "Price"])
-            if preco_input:
-                await _type_original_fixed(page, preco_input, str(dados_imovel.get('preco', '0')), is_price=True)
+            if not preco_input or not await _type_original_fixed(
+                page, preco_input, str(dados_imovel.get('preco', '0')), is_price=True
+            ):
+                logger.error(f"[{imovel_id}] Campo de preço ausente ou não preenchido.")
+                return False
 
             # 3. QUARTOS
             quartos_input = await _achar_input_original(page, ["Número de quartos", "Bedrooms"])
-            if quartos_input:
-                await _type_original_fixed(page, quartos_input, str(dados_imovel.get('quartos', '1')))
+            if not quartos_input or not await _type_original_fixed(
+                page, quartos_input, str(dados_imovel.get('quartos', '1'))
+            ):
+                logger.error(f"[{imovel_id}] Campo de quartos ausente ou não preenchido.")
+                return False
 
             # 4. BANHEIROS
             banheiros_input = await _achar_input_original(page, ["Número de banheiros", "Bathrooms"])
-            if banheiros_input:
-                await _type_original_fixed(page, banheiros_input, str(dados_imovel.get('banheiros', '1')))
+            if not banheiros_input or not await _type_original_fixed(
+                page, banheiros_input, str(dados_imovel.get('banheiros', '1'))
+            ):
+                logger.error(f"[{imovel_id}] Campo de banheiros ausente ou não preenchido.")
+                return False
 
             # 5. DESCRIÇÃO COM ASSINATURA (AGORA ULTRA ROBUSTO)
-            try:
-                descricao_base = str(dados_imovel.get('descricao', ''))
-                assinatura = "\n\nAS Imobiliária\nCRECI 28.188-J"
-                descricao_final = f"{descricao_base}{assinatura}"
-                
-                logger.info(f"[{imovel_id}] Preenchendo descrição completa (Tamanho: {len(descricao_final)} caracteres)...")
-                
-                # Tenta localizar a textarea
-                textarea = page.locator("textarea").last
-                await textarea.scroll_into_view_if_needed()
-                await asyncio.sleep(0.5)
-                
-                # Usa a função de digitação que agora diferencia texto curto de longo
-                success = await _type_original_fixed(page, textarea, descricao_final)
-                
-                if not success:
-                    logger.error(f"[{imovel_id}] Falha ao preencher a descrição.")
-                else:
-                    logger.info(f"[{imovel_id}] Descrição e assinatura preenchidas com sucesso.")
+            descricao_base = str(dados_imovel.get('descricao', '')).strip()
+            if not descricao_base:
+                logger.error(f"[{imovel_id}] Descrição vazia; publicação interrompida.")
+                return False
+            assinatura = "\n\nAS Imobiliária\nCRECI 28.188-J"
+            descricao_final = f"{descricao_base}{assinatura}"
 
-            except Exception as e:
-                logger.warning(f"[{imovel_id}] Erro ao preencher descrição: {e}")
+            logger.info(f"[{imovel_id}] Preenchendo descrição completa (Tamanho: {len(descricao_final)} caracteres)...")
+            try:
+                textarea = page.locator("textarea").last
+                await textarea.wait_for(state="visible", timeout=10000)
+                await textarea.scroll_into_view_if_needed()
+                success = await _type_original_fixed(page, textarea, descricao_final)
+            except Exception as error:
+                logger.error(
+                    f"[{imovel_id}] Campo de descrição indisponível; publicação interrompida "
+                    f"({error.__class__.__name__})."
+                )
+                return False
+
+            if not success:
+                logger.error(f"[{imovel_id}] Falha ao preencher a descrição; publicação interrompida.")
+                return False
 
             # F12 para forçar o botão Avançar
             await _simular_f12_console(page)

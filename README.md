@@ -1,15 +1,26 @@
-
+﻿
 # 🤖 Bot de Publicação Automática - Facebook Marketplace
 
 Automação robusta para publicar anúncios de imóveis no Facebook Marketplace a partir da AS Imobiliária.
 
-**Versão:** 2.0 (Com Neon PostgreSQL + Fila Automática)
+**Versão:** 2.0 (SQLite por instalação + Fila Automática)
+
+## Banco de dados e isolamento dos clientes
+
+Cada organização deve usar uma instância própria da aplicação e seu próprio
+arquivo SQLite. Não compartilhe a URL, o banco, as credenciais administrativas
+ou o token do agente entre organizações. Em hospedagem, configure o SQLite em um
+disco persistente; o sistema de arquivos temporário pode apagar o banco em um
+reinício ou novo deploy.
+
+O passo a passo de hospedagem, configuração do disco e instalação do agente está
+em [DESKTOP_AGENT.md](./DESKTOP_AGENT.md).
 
 ---
 
 ## ✨ O Que é Novo na v2.0
 
-- ✅ **Banco de Dados Neon** - Rastreamento persistente de imóveis
+- ✅ **Banco SQLite** - Rastreamento de imóveis em arquivo por instalação
 - ✅ **Fila Automática** - Agendamento inteligente de publicações
 - ✅ **Detecção de Bloqueios** - Pausa automática se Facebook bloqueia
 - ✅ **Dashboard Avançado** - Gerenciamento visual da fila
@@ -21,8 +32,7 @@ Automação robusta para publicar anúncios de imóveis no Facebook Marketplace 
 
 ## 📋 Requisitos
 
-- **Python 3.8+**
-- **Neon Account** (PostgreSQL gratuito) - https://console.neon.tech/
+- **Python 3.12+**
 - **Facebook Account** (com permissão Marketplace)
 - **Chrome/Chromium Browser**
 
@@ -36,30 +46,26 @@ Automação robusta para publicar anúncios de imóveis no Facebook Marketplace 
 cd as_marketplace_bot_v2
 ```
 
-### 2. Crie Conta Neon
-
-1. Acesse https://console.neon.tech/
-2. Crie um novo projeto
-3. Copie a **CONNECTION STRING**
-
-### 3. Configure Variável de Ambiente
+### 2. Configure o SQLite
 
 Crie arquivo `.env`:
 
 ```
-DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/neondb
+DATABASE_URL=sqlite:///./data/onora-imob.db
 ```
 
-Ou edite `config.py` diretamente.
+Não coloque credenciais administrativas nem tokens do agente nesse arquivo. Para
+produção, configure um disco persistente e siga o guia
+[DESKTOP_AGENT.md](./DESKTOP_AGENT.md).
 
-### 4. Instale Dependências
+### 3. Instale Dependências
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 5. Execute o Bot
+### 4. Execute o Bot
 
 ```bash
 python app.py
@@ -90,7 +96,7 @@ Opções:
 2. Navegue pela AS Imobiliária
 3. CTRL + CLIQUE nos imóveis desejados
 4. Pressione ENTER
-5. Dados salvos automaticamente no Neon
+5. Dados salvos automaticamente no arquivo SQLite configurado
 ```
 
 ### Passo 2: Publicar
@@ -125,7 +131,7 @@ O sistema detecta automaticamente:
 
 Este projeto agora inclui uma plataforma web profissional com backend e frontend separados:
 
-- `backend/` — FastAPI, WebSocket em tempo real, serviços de extração e publicação, banco compatível SQLite/PostgreSQL.
+- `backend/` — FastAPI, WebSocket em tempo real, serviços de extração e publicação, SQLite por instalação.
 - `frontend/` — React + Vite + Tailwind, painel SaaS, cards de imóveis, logs ao vivo e seleção visual.
 
 ### Inicializar a nova plataforma
@@ -183,7 +189,7 @@ as_marketplace_bot_v2/
 ├── app.py              # Menu principal
 ├── config.py           # Configurações centralizadas
 ├── utils.py            # Funções compartilhadas
-├── database.py         # Gerenciador Neon PostgreSQL
+├── database.py         # Gerenciador SQLite/PostgreSQL
 ├── extractor.py        # Extração de dados
 ├── error_handler.py    # Detecção de bloqueios
 ├── facebook_handler.py # Publicação no Facebook
@@ -243,7 +249,7 @@ Acesse opção "4" para:
 
 ## 🔍 Troubleshooting
 
-**Erro: "Não consegui conectar ao Neon"**
+**Erro de conexão com o banco**
 ```
 → Verifique DATABASE_URL em config.py ou .env
 → Teste conexão em https://console.neon.tech/

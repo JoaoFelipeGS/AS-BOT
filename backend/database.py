@@ -1,5 +1,6 @@
 from pathlib import Path
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -7,32 +8,29 @@ from .config import settings
 from .models import Base
 
 def get_engine():
-    database_url = settings.database_url
+    database_url = make_url(settings.database_url)
 
-    if database_url.startswith("sqlite"):
-        # --- MELHORIA DE CAMINHO ---
-        # Extraímos o caminho do arquivo do banco de dados
-        # Ex: sqlite:///./database.db -> ./database.db
-        db_path_str = database_url.replace("sqlite:///", "")
-        db_path = Path(db_path_str).resolve()
-        
-        # Garante que a pasta onde o banco vai ficar exista
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Usamos o caminho absoluto para evitar que o SQLite crie 
-        # bancos em pastas diferentes dependendo de onde o .exe é aberto
-        absolute_url = f"sqlite:///{db_path}"
-        
-        logger.info(f"🗄️  Conectando ao banco de dados local: {db_path}")
-        
+    if database_url.get_backend_name() == "sqlite":
+        db_path_str = database_url.database
+        is_sqlite_uri = database_url.query.get("uri") in (True, "true", "1")
+        if db_path_str not in (None, "", ":memory:") and not is_sqlite_uri:
+            db_path = Path(db_path_str).expanduser().resolve()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            database_url = database_url.set(database=str(db_path))
+            logger.info("Conectando ao banco de dados SQLite: %s", db_path)
+
+            return create_engine(
+                database_url,
+                connect_args={"check_same_thread": False},
+                poolclass=NullPool,
+            )
+
         return create_engine(
-            absolute_url, 
-            connect_args={"check_same_thread": False}, 
-            poolclass=NullPool
+            database_url,
+            connect_args={"check_same_thread": False},
         )
 
-    # Se for Postgres/Neon, mantém a configuração original
-    return create_engine(database_url, pool_pre_ping=True)
+    return create_engine(settings.database_url, pool_pre_ping=True)
 
 # Importamos o logger aqui para evitar importação circular
 from backend.logging import logger

@@ -6,6 +6,58 @@ from backend.services import facebook_handler
 
 
 class FacebookPublishFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_description_locator_finds_visible_contenteditable_when_no_textarea(self):
+        class Candidate:
+            def __init__(self, visible):
+                self.visible = visible
+
+            async def count(self):
+                return 1 if self.visible else 0
+
+            def nth(self, _index):
+                return self
+
+            async def is_visible(self):
+                return self.visible
+
+        contenteditable = Candidate(True)
+        page = SimpleNamespace(
+            locator=lambda selector: contenteditable
+            if selector == '[contenteditable="true"][role="textbox"]'
+            else Candidate(False)
+        )
+
+        field = await facebook_handler._achar_campo_descricao(page)
+
+        self.assertIs(field, contenteditable)
+
+    async def test_long_description_fills_and_verifies_contenteditable_field(self):
+        description = "Descrição completa da casa. " * 8
+        locator = SimpleNamespace(
+            fill=AsyncMock(),
+            evaluate=AsyncMock(return_value=description),
+        )
+        page = SimpleNamespace(keyboard=SimpleNamespace(press=AsyncMock()))
+
+        result = await facebook_handler._type_original_fixed(page, locator, description)
+
+        self.assertTrue(result)
+        locator.fill.assert_awaited_once_with(description, timeout=10000)
+        page.keyboard.press.assert_awaited_once_with("Tab")
+
+    async def test_short_description_is_also_verified_after_fill(self):
+        description = "Casa com dois quartos e garagem."
+        locator = SimpleNamespace(
+            fill=AsyncMock(),
+            evaluate=AsyncMock(return_value=description),
+        )
+        page = SimpleNamespace(keyboard=SimpleNamespace(press=AsyncMock()))
+
+        result = await facebook_handler._preencher_descricao(page, locator, description)
+
+        self.assertTrue(result)
+        locator.fill.assert_awaited_once_with(description, timeout=10000)
+
     async def test_photo_upload_uses_download_and_validation_utilities(self):
         locator = SimpleNamespace(
             first=None,
@@ -60,12 +112,7 @@ class FacebookPublishFailureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_description_field_does_not_report_publish_ready(self):
         field = object()
-        description = SimpleNamespace(wait_for=AsyncMock(side_effect=TimeoutError()))
-        page = SimpleNamespace(
-            goto=AsyncMock(),
-            locator=lambda _selector: SimpleNamespace(last=description),
-        )
-
+        page = SimpleNamespace(goto=AsyncMock())
         with (
             patch.object(facebook_handler.asyncio, "sleep", new=AsyncMock()),
             patch.object(
@@ -82,6 +129,16 @@ class FacebookPublishFailureTests(unittest.IsolatedAsyncioTestCase):
                 facebook_handler,
                 "_type_original_fixed",
                 new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                facebook_handler,
+                "_preencher_descricao",
+                new=AsyncMock(return_value=True),
+            ) as fill_description,
+            patch.object(
+                facebook_handler,
+                "_achar_campo_descricao",
+                new=AsyncMock(side_effect=RuntimeError("Campo de descrição não encontrado")),
             ),
             patch.object(
                 facebook_handler,
@@ -103,6 +160,7 @@ class FacebookPublishFailureTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertFalse(result)
+        fill_description.assert_not_awaited()
         show_next_step.assert_not_awaited()
 
 

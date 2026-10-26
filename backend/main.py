@@ -1,4 +1,3 @@
-import asyncio
 import sys
 import os
 from contextlib import asynccontextmanager
@@ -17,10 +16,7 @@ except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("backend")
 
-# =========================================================
-# 2. FIXES PARA WINDOWS E PLAYWRIGHT
-# =========================================================
-# Render usa /opt/render/project e não o diretório home do usuário.
+# Keep extractor Chromium pointed at Render's installed browser cache.
 def get_playwright_browsers_path() -> str:
     configured = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
     if configured and configured.strip():
@@ -37,15 +33,9 @@ def get_playwright_browsers_path() -> str:
         return str(home / "Library" / "Caches" / "ms-playwright")
     return str(home / ".cache" / "ms-playwright")
 
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = get_playwright_browsers_path()
-logger.info(f"PLAYWRIGHT_BROWSERS_PATH={os.environ['PLAYWRIGHT_BROWSERS_PATH']}")
 
-# Windows Async Loop Fix
-if sys.platform.startswith("win"):
-    try:
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    except Exception:
-        pass
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = get_playwright_browsers_path()
+logger.info("PLAYWRIGHT_BROWSERS_PATH=%s", os.environ["PLAYWRIGHT_BROWSERS_PATH"])
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -87,8 +77,6 @@ else:
 from backend.config import settings
 from backend.database import init_db
 from backend.api.routes import router
-from backend.browser_manager import browser_manager
-
 logger.info(f"📂 Diretório Raiz (Escrita): {BASE_DIR}")
 logger.info(f"📦 Diretório Interno (Leitura): {BUNDLE_DIR}")
 
@@ -101,17 +89,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Erro ao inicializar banco: {e}")
 
-    try:
-        await browser_manager.start()
-        logger.info("✅ Browser Manager iniciado")
-    except Exception as e:
-        logger.error(f"❌ Erro ao iniciar Browser Manager: {e}")
-
     yield
 
-    logger.info("Stopping server... limpando sessões do browser")
-    await browser_manager.stop()
-    logger.info("✅ Browser Manager encerrado com sucesso")
+    logger.info("Servidor da API encerrado")
 
 app = FastAPI(
     title="AS Marketplace Bot SaaS",
@@ -173,7 +153,10 @@ async def serve_react_app(full_path: str):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "browser_active": browser_manager._playwright is not None}
+    return {
+        "status": "ok",
+        "desktop_agent_configured": bool(settings.desktop_agent_token.strip()),
+    }
 
 if __name__ == "__main__":
     import uvicorn

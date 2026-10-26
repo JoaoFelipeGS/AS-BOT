@@ -12,7 +12,16 @@ class QueueService:
             total_publicados = db.query(Fila).filter(Fila.status == "publicado").count()
             total_erros = db.query(Fila).filter(Fila.status == "erro").count()
             total_bloqueios = db.query(Fila).filter(Fila.status == "bloqueado").count()
-            fila_pendente = db.query(Fila).filter(Fila.status == "aguardando").count()
+            fila_pendente = db.query(Fila).filter(
+                Fila.status.in_(
+                    [
+                        "aguardando",
+                        "aguardando_agente",
+                        "processando_agente",
+                        "aguardando_confirmacao",
+                    ]
+                )
+            ).count()
             total_processados = total_publicados + total_erros
             taxa_sucesso = round((total_publicados / total_processados) * 100, 2) if total_processados > 0 else 0.0
             return {
@@ -48,7 +57,18 @@ class QueueService:
         try:
             imovel = db.query(Imovel).filter(Imovel.id == imovel_id).first()
             if not imovel: return None
-            fila_existente = db.query(Fila).filter(Fila.imovel_id == imovel_id, Fila.status.in_(["aguardando", "processando"])).first()
+            fila_existente = db.query(Fila).filter(
+                Fila.imovel_id == imovel_id,
+                Fila.status.in_(
+                    [
+                        "aguardando",
+                        "processando",
+                        "aguardando_agente",
+                        "processando_agente",
+                        "aguardando_confirmacao",
+                    ]
+                ),
+            ).first()
             if fila_existente: return fila_existente
             fila = Fila(imovel_id=imovel_id, status="aguardando", tentativas=0, agendado_para=datetime.utcnow(), criado_em=datetime.utcnow(), atualizado_em=datetime.utcnow())
             db.add(fila)

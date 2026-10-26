@@ -3,12 +3,13 @@ import re
 import sys
 import asyncio
 import json
+import hmac
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, update
 from typing import List
 
 from ..schemas import (
@@ -23,11 +24,9 @@ from ..schemas import (
 from ..database import SessionLocal
 from ..models import Imovel, Fila 
 from ..services.extractor_service import ExtractorService
-from ..services.publisher_service import PublisherService
 from ..services.queue_service import QueueService
 from backend.services.log_broadcaster import log_broadcaster
 from backend.logging import logger
-from backend.browser_manager import browser_manager
 from backend.auth import create_token, require_auth
 from backend.config import settings
 from pydantic import BaseModel
@@ -37,6 +36,12 @@ router = APIRouter()
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class DesktopAgentResult(BaseModel):
+    ready_for_review: bool
+    error: str | None = None
+
 
 @router.post("/login")
 def login(payload: LoginRequest):
@@ -86,6 +91,41 @@ def _prepare_imovel(imovel: Imovel):
     if not imovel: return None
     imovel.imagens_json = _normalize_imagens(imovel.imagens_json)
     return imovel
+
+
+async def require_desktop_agent(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+):
+    configured_token = settings.desktop_agent_token.strip()
+    if not configured_token:
+        raise HTTPException(status_code=503, detail="Agente desktop não configurado no servidor")
+    scheme, _, token = (authorization or "").partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or not token
+        or not hmac.compare_digest(token, configured_token)
+    ):
+        raise HTTPException(status_code=401, detail="Token do agente desktop inválido")
+    return True
+
+
+def _agent_job_payload(fila: Fila):
+    imovel = fila.imovel
+    if not imovel:
+        raise HTTPException(status_code=409, detail="Imóvel da tarefa não encontrado")
+    return {
+        "fila_id": fila.id,
+        "imovel_id": imovel.id,
+        "dados_imovel": {
+            "preco": imovel.preco,
+            "descricao": imovel.descricao,
+            "quartos": imovel.quartos,
+            "banheiros": imovel.banheiros,
+            "garagem": imovel.garagem,
+            "imagens_json": _normalize_imagens(imovel.imagens_json),
+            "url": imovel.url,
+        },
+    }
 
 @router.get("/dashboard", response_model=DashboardStats)
 def dashboard_overview(db: Session = Depends(get_db), _user: str = Depends(require_auth)):
@@ -238,16 +278,156 @@ def delete_queue_item(fila_id: int, db: Session = Depends(get_db), _user: str = 
         raise HTTPException(status_code=500, detail="Erro ao remover item da fila")
 
 @router.post("/fila/publish")
-async def publish_item(payload: PublishRequest, _user: str = Depends(require_auth)):
+async def publish_item(
+    payload: PublishRequest,
+    db: Session = Depends(get_db),
+    _user: str = Depends(require_auth),
+):
+    if not settings.desktop_agent_token.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="Configure DESKTOP_AGENT_TOKEN e conecte o agente desktop antes de publicar",
+        )
     try:
-        success = await PublisherService.publish(payload.fila_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Falha ao publicar o imóvel")
-        return {"ok": True}
-    except HTTPException: raise
+        fila = db.query(Fila).filter(Fila.id == payload.fila_id).first()
+        if not fila:
+            raise HTTPException(status_code=404, detail="Item da fila não encontrado")
+        if fila.status in ("aguardando_agente", "processando_agente", "aguardando_confirmacao"):
+            return {"ok": True, "status": fila.status}
+        if fila.status not in ("aguardando", "erro"):
+            raise HTTPException(status_code=409, detail=f"Item não pode ser publicado no status '{fila.status}'")
+
+        result = db.execute(
+            update(Fila)
+            .where(Fila.id == payload.fila_id, Fila.status == fila.status)
+            .values(
+                status="aguardando_agente",
+                mensagem_erro=None,
+                atualizado_em=datetime.utcnow(),
+            )
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Item da fila foi atualizado simultaneamente")
+        db.commit()
+        logger.info(f"Publicação {payload.fila_id} encaminhada ao agente desktop")
+        return {"ok": True, "status": "aguardando_agente"}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
-        logger.exception(f"Erro ao publicar imóvel: {str(e)}")
-        raise HTTPException(status_code=500, detail="Erro ao publicar imóvel")
+        db.rollback()
+        logger.exception(f"Erro ao encaminhar publicação ao agente desktop: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao encaminhar publicação")
+
+
+@router.post("/agent/jobs/claim")
+def claim_desktop_job(
+    db: Session = Depends(get_db),
+    _agent: bool = Depends(require_desktop_agent),
+):
+    stale_at = datetime.utcnow() - timedelta(seconds=120)
+    db.execute(
+        update(Fila)
+        .where(
+            Fila.status.in_(("processando_agente", "aguardando_confirmacao")),
+            Fila.atualizado_em < stale_at,
+        )
+        .values(
+            status="erro",
+            mensagem_erro="Agente desktop desconectado. Reenvie a publicação para tentar novamente.",
+            atualizado_em=datetime.utcnow(),
+        )
+    )
+    db.commit()
+
+    for _ in range(3):
+        fila = (
+            db.query(Fila)
+            .filter(Fila.status == "aguardando_agente")
+            .order_by(Fila.agendado_para.asc(), Fila.id.asc())
+            .first()
+        )
+        if not fila:
+            return {"job": None}
+        fila_id = fila.id
+        result = db.execute(
+            update(Fila)
+            .where(Fila.id == fila_id, Fila.status == "aguardando_agente")
+            .values(
+                status="processando_agente",
+                tentativas=(Fila.tentativas + 1),
+                atualizado_em=datetime.utcnow(),
+                mensagem_erro=None,
+            )
+        )
+        if result.rowcount == 1:
+            db.commit()
+            claimed = db.query(Fila).filter(Fila.id == fila_id).first()
+            return {"job": _agent_job_payload(claimed)}
+        db.rollback()
+    return {"job": None}
+
+
+@router.get("/agent/jobs/{fila_id}")
+def get_desktop_job_status(
+    fila_id: int,
+    db: Session = Depends(get_db),
+    _agent: bool = Depends(require_desktop_agent),
+):
+    fila = db.query(Fila).filter(Fila.id == fila_id).first()
+    if not fila:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if fila.status == "aguardando_confirmacao":
+        fila.atualizado_em = datetime.utcnow()
+        db.commit()
+    return {"fila_id": fila.id, "status": fila.status, "mensagem_erro": fila.mensagem_erro}
+
+
+@router.post("/agent/jobs/{fila_id}/heartbeat")
+def heartbeat_desktop_job(
+    fila_id: int,
+    db: Session = Depends(get_db),
+    _agent: bool = Depends(require_desktop_agent),
+):
+    result = db.execute(
+        update(Fila)
+        .where(
+            Fila.id == fila_id,
+            Fila.status.in_(("processando_agente", "aguardando_confirmacao")),
+        )
+        .values(atualizado_em=datetime.utcnow())
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Tarefa não está ativa para este agente")
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/agent/jobs/{fila_id}/result")
+def report_desktop_job_result(
+    fila_id: int,
+    payload: DesktopAgentResult,
+    db: Session = Depends(get_db),
+    _agent: bool = Depends(require_desktop_agent),
+):
+    fila = db.query(Fila).filter(Fila.id == fila_id).first()
+    if not fila:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    if fila.status != "processando_agente":
+        raise HTTPException(status_code=409, detail="Tarefa não está sendo processada pelo agente")
+
+    fila.status = "aguardando_confirmacao" if payload.ready_for_review else "erro"
+    fila.mensagem_erro = None if payload.ready_for_review else (payload.error or "Agente não conseguiu preparar o anúncio")[:1000]
+    fila.atualizado_em = datetime.utcnow()
+    db.commit()
+    logger.info(
+        "Agente desktop terminou tarefa %s: %s",
+        fila_id,
+        fila.status,
+    )
+    return {"ok": True, "status": fila.status}
 
 @router.post("/fila/retry/{fila_id}")
 def retry_item(fila_id: int, db: Session = Depends(get_db), _user: str = Depends(require_auth)):
@@ -264,13 +444,18 @@ def retry_item(fila_id: int, db: Session = Depends(get_db), _user: str = Depends
 @router.post("/fila/confirm/{fila_id}")
 async def confirm_publication(fila_id: int, db: Session = Depends(get_db), _user: str = Depends(require_auth)):
     try:
+        fila = db.query(Fila).filter(Fila.id == fila_id).first()
+        if not fila:
+            raise HTTPException(status_code=404, detail="Item da fila não encontrado")
+        if fila.status != "aguardando_confirmacao":
+            raise HTTPException(status_code=409, detail="Item ainda não está pronto para confirmação")
         success = QueueService.mark_as_published(db, fila_id)
         if not success:
             raise HTTPException(status_code=404, detail="Item da fila não encontrado")
 
-        await browser_manager.close_session("admin")
-
-        return {"ok": True, "message": "Publicação confirmada e navegador encerrado."}
+        return {"ok": True, "message": "Publicação confirmada."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Erro ao confirmar publicação: {str(e)}")
         raise HTTPException(status_code=500, detail="Erro ao confirmar publicação")

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # --- Credenciais/segurança do dashboard ---
     admin_username: str = ""
     admin_password: str = ""
+    desktop_agent_token: str = ""
 
     # --- Pastas (Compatibilidade total) ---
     dir_logs: str = "logs"

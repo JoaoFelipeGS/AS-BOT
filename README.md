@@ -170,6 +170,14 @@ npm run dev
 
 ## 📁 Estrutura
 
+### Publicação com navegador local
+
+Para manter API/dashboard hospedados e abrir o Chromium no computador do
+operador, configure e execute o worker desktop. Consulte
+[DESKTOP_AGENT.md](./DESKTOP_AGENT.md) para instalação, token de API e fluxo de
+revisão/confirmação. O navegador headless do servidor não pode aparecer no
+computador do operador.
+
 ```
 as_marketplace_bot_v2/
 ├── app.py              # Menu principal

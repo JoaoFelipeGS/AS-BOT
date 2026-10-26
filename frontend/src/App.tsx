@@ -256,7 +256,7 @@ function ViewQueue({
         queue.map((item) => {
           const isPublishing = publishingIds.has(item.id)
           return (
-            <div key={item.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between gap-4">
+            <div key={item.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4 flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-col gap-1">
                 <p className="font-semibold">{item.imovel.titulo}</p>
                 <p className="text-xs text-slate-500">R$ {item.imovel.preco.toLocaleString()}</p>
@@ -267,10 +267,20 @@ function ViewQueue({
                     ? 'bg-sky-500/20 text-sky-400 font-bold'
                     : item.status === 'aguardando_confirmacao'
                       ? 'bg-amber-500 text-black font-bold'
+                      : item.status === 'erro'
+                        ? 'bg-rose-500/20 text-rose-300 font-bold'
                       : 'bg-slate-800 text-slate-300'
                 }`}>
                   {isPublishing && <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />}
-                  {isPublishing ? 'publicando...' : item.status}
+                  {isPublishing
+                    ? 'enviando ao agente...'
+                    : item.status === 'aguardando_agente'
+                      ? 'aguardando agente desktop'
+                      : item.status === 'processando_agente'
+                        ? 'preparando no computador'
+                        : item.status === 'aguardando_confirmacao'
+                          ? 'pronto para conferir'
+                          : item.status}
                 </span>
                 {isPublishing ? (
                   <div className="h-8 w-8 flex items-center justify-center">
@@ -280,6 +290,8 @@ function ViewQueue({
                   <button onClick={() => handleConfirm(item.id)} className="rounded-full bg-emerald-500 p-2 text-white hover:bg-emerald-400 transition" title="Confirmar Publicação">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   </button>
+                ) : item.status === 'aguardando_agente' || item.status === 'processando_agente' ? (
+                  <span className="text-xs text-slate-400">Acompanhe a janela do agente</span>
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => handlePublish(item.id)} className="p-2 rounded-full bg-sky-600 text-white hover:bg-sky-500 transition"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
@@ -288,6 +300,9 @@ function ViewQueue({
                   </div>
                 )}
               </div>
+              {item.mensagem_erro && (
+                <p className="basis-full text-sm text-rose-300">{item.mensagem_erro}</p>
+              )}
             </div>
           )
         })
@@ -426,6 +441,14 @@ function App() {
       })
     }
   }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const refreshTimer = window.setInterval(() => {
+      void refreshData()
+    }, 5000)
+    return () => window.clearInterval(refreshTimer)
+  }, [isAuthenticated])
 
   useEffect(() => {
     const connectWS = () => {
@@ -576,7 +599,7 @@ function App() {
   async function handleConfirm(id: number) {
     try {
       await api.post(`/fila/confirm/${id}`)
-      setStatusMessage('Publicação confirmada! Browser encerrado.')
+      setStatusMessage('Publicação confirmada no dashboard.')
       refreshData()
     } catch (e) { setStatusMessage('Erro ao confirmar publicação.') }
   }

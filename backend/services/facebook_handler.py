@@ -46,34 +46,8 @@ async def _type_original_fixed(page: Page, locator, value: str, is_price=False):
             texto_final = str(value)
 
         # --- MÉTODO PARA TEXTOS LONGOS (DESCRIÇÃO) ---
-        # Se o texto for longo, não usamos .type() com delay para evitar cortes e lentidão
         if len(texto_final) > 150:
-            await locator.click(force=True)
-            await asyncio.sleep(0.5)
-            
-            # Limpa o campo
-            await page.keyboard.press("Control+A")
-            await page.keyboard.press("Backspace")
-            
-            # Injeta o valor via JavaScript instantaneamente
-            await locator.evaluate(f"""
-                el => {{
-                    const proto = el.tagName === 'TEXTAREA' 
-                        ? window.HTMLTextAreaElement.prototype 
-                        : window.HTMLInputElement.prototype;
-                    const setter = Object.getOwnPropertyDescriptor(proto, 'value');
-                    if (setter && setter.set) {{
-                        setter.set.call(el, `{texto_final.replace('`', '\\`').replace('$', '\\$')}`);
-                    }}
-                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-                }}
-            """)
-            logger.info("Texto longo injetado via JS com sucesso.")
-            await asyncio.sleep(0.5)
-            await page.keyboard.press("Tab")
-            return True
+            return await _preencher_descricao(page, locator, texto_final)
 
         # --- MÉTODO PARA TEXTOS CURTOS (Preço, Quartos, etc) ---
         await locator.click(force=True)
@@ -108,6 +82,24 @@ async def _type_original_fixed(page: Page, locator, value: str, is_price=False):
         logger.warning(f"Erro na digitação: {e}")
         return False
 
+
+async def _preencher_descricao(page: Page, locator, value: str) -> bool:
+    try:
+        await locator.fill(value, timeout=10000)
+        actual = await locator.evaluate(
+            "el => el.isContentEditable ? el.innerText : el.value"
+        )
+        if (actual or "").strip() != value.strip():
+            logger.error("O campo de texto não manteve a descrição completa.")
+            return False
+        await page.keyboard.press("Tab")
+        logger.info("Descrição preenchida e validada.")
+        return True
+    except Exception as error:
+        logger.warning("Falha ao preencher a descrição (%s)", error.__class__.__name__)
+        return False
+
+
 # =========================================================
 # 3. BUSCA E UPLOAD
 # =========================================================
@@ -137,6 +129,26 @@ async def _achar_input_original(page, termos):
                 return page.locator(f"#{resultado}" if resultado != 'found_by_index' else "input").first
         except: continue
     return None
+
+
+async def _achar_campo_descricao(page):
+    selectors = (
+        '[aria-label="Descrição"]',
+        '[aria-label="Description"]',
+        '[placeholder="Descrição"]',
+        '[placeholder="Description"]',
+        "textarea",
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+    )
+    for selector in selectors:
+        candidates = page.locator(selector)
+        for index in range(await candidates.count()):
+            candidate = candidates.nth(index)
+            if await candidate.is_visible():
+                return candidate
+    raise RuntimeError("Campo de descrição visível não encontrado no formulário")
+
 
 async def _upload_imagens_por_referencia(page, image_urls, imovel_id):
     try:
@@ -221,10 +233,9 @@ async def publicar_imovel(page: Page, imovel_id: int, fila_id: int, dados_imovel
 
             logger.info(f"[{imovel_id}] Preenchendo descrição completa (Tamanho: {len(descricao_final)} caracteres)...")
             try:
-                textarea = page.locator("textarea").last
-                await textarea.wait_for(state="visible", timeout=10000)
-                await textarea.scroll_into_view_if_needed()
-                success = await _type_original_fixed(page, textarea, descricao_final)
+                description_field = await _achar_campo_descricao(page)
+                await description_field.scroll_into_view_if_needed()
+                success = await _preencher_descricao(page, description_field, descricao_final)
             except Exception as error:
                 logger.error(
                     f"[{imovel_id}] Campo de descrição indisponível; publicação interrompida "

@@ -26,6 +26,15 @@ def get_playwright_browsers_path() -> str:
         return str(home / "Library" / "Caches" / "ms-playwright")
     return str(home / ".cache" / "ms-playwright")
 
+
+def _should_run_headless() -> bool:
+    if settings.browser_headless:
+        return True
+    if sys.platform.startswith("linux"):
+        return not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+    return False
+
+
 class BrowserSession:
     def __init__(self, context: BrowserContext):
         self.context = context
@@ -71,10 +80,15 @@ class BrowserManager:
             profile_dir = Path(settings.persistent_profile) / session_id
             profile_dir.mkdir(parents=True, exist_ok=True)
 
+            headless = _should_run_headless()
+            logger.info(
+                "Iniciando Chromium persistente em modo %s",
+                "headless" if headless else "visível",
+            )
             context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(profile_dir),
                 channel="chromium",
-                headless=settings.browser_headless,
+                headless=headless,
                 viewport=None,
                 slow_mo=settings.browser_slow_mo,
                 args=[
